@@ -1,10 +1,15 @@
 {
-  "name": "pi-caveman",
+  "name": "@izhimu/pi-caveman",
   "version": "0.1.0",
   "description": "Caveman mode for pi — ultra-compressed communication, 65% output token savings",
   "type": "module",
-  "private": true,
   "keywords": ["pi-package", "caveman", "token-savings", "compression"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/izhimu/pi-caveman.git"
+  },
+  "author": "izhimu",
+  "license": "MIT",
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
@@ -12,5 +17,10 @@
     "extensions": ["./extensions"],
     "skills": ["./skills"]
   },
-  "license": "MIT"
+  "files": [
+    "extensions/",
+    "skills/",
+    "README.md",
+    "LICENSE"
+  ]
 }
