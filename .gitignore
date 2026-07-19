@@ -1,0 +1,5 @@
+node_modules/
+*.tgz
+.superpowers/
+package/
+docs/superpowers/
