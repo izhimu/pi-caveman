@@ -19,7 +19,13 @@ Upstream: [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman)
 
 ## Install
 
-### From git (recommended)
+### npm (recommended)
+
+```bash
+pi install @izhimu/pi-caveman
+```
+
+### From git
 
 ```bash
 # Global
