@@ -240,46 +240,61 @@ function clearStatus(ui: UI): void {
   ui.ui.notify("caveman: off", "info");
 }
 
-// ── Mode parsing (mirrors caveman opencode plugin) ──────────────────────────
+// ── Mode parsing (mirrors caveman hooks/caveman-parse.js) ───────────────────
 
 function parseModeChange(promptRaw: string): string | "off" | null {
   let prompt = (promptRaw || "").trim();
   if (!prompt) return null;
 
-  // Natural-language deactivation (checked first)
-  if (
-    /\b(stop|disable|deactivate|turn off)\b.*\bcaveman\b/i.test(prompt) ||
-    /\bcaveman\b.*\b(stop|disable|deactivate|turn off)\b/i.test(prompt) ||
-    /\bnormal mode\b/i.test(prompt)
-  ) return "off";
+  prompt = prompt.toLowerCase().replace(/\s+/g, " ");
 
-  // Slash-command
-  const lower = prompt.toLowerCase();
-  if (lower.startsWith("/caveman")) {
-    const parts = lower.split(/\s+/);
+  // Natural-language deactivation (checked first)
+  const wantsOff =
+    /\b(stop|disable|deactivate|quit|exit|kill)\s+(the\s+)?caveman\b/.test(prompt) ||
+    /\bcaveman(\s+mode)?\s+(off|stop|disabled?)\b/.test(prompt) ||
+    /\bturn\s+off\s+(the\s+)?caveman\b/.test(prompt) ||
+    /^(please\s+)?(go\s+|back\s+to\s+|switch\s+(back\s+)?to\s+|return\s+to\s+)?normal\s+mode\b/.test(prompt) ||
+    (/\bnormal\s+mode\b/.test(prompt) && /\bcaveman\b/.test(prompt));
+
+  if (wantsOff) return "off";
+
+  // Natural-language activation (exclude questions)
+  const isQuestion =
+    /^(what|whats|what's|how|why|when|where|who|does|do|did|is|are|can|could|would|should|tell me|explain)\b/.test(prompt);
+
+  if (!isQuestion) {
+    if (
+      /\b(activate|enable|start|turn on|use|switch to|want|give me)\b[^.]{0,40}\bcaveman\b/.test(prompt) ||
+      /\btalk like\b[^.]{0,40}\bcaveman\b/.test(prompt) ||
+      /\bcaveman\s+mode\s+(on|please|now)\b/.test(prompt) ||
+      /^caveman(\s+mode)?\s*[.!]*$/.test(prompt) ||
+      /\b(less tokens|fewer tokens|be brief|be terse|shorter answers)\b(?!\s+(in|for|on|about|when|during|with)\b)/.test(prompt)
+    ) {
+      const mode = resolveDefault();
+      return mode !== "off" ? mode : null;
+    }
+  }
+
+  // Slash-command (support bare and namespaced /caveman:<cmd>)
+  if (prompt.startsWith("/caveman")) {
+    const parts = prompt.split(/\s+/);
     const cmd = parts[0];
     const arg = parts[1] || "";
 
-    if (cmd === "/caveman-commit")   return "commit";
-    if (cmd === "/caveman-review")   return "review";
-    if (cmd === "/caveman-compress") return "compress";
+    if (cmd === "/caveman-commit" || cmd === "/caveman:caveman-commit")   return "commit";
+    if (cmd === "/caveman-review" || cmd === "/caveman:caveman-review")   return "review";
+    if (cmd === "/caveman-compress" || cmd === "/caveman:caveman-compress") return "compress";
 
-    if (cmd === "/caveman") {
-      if (!arg) return resolveDefault();
+    if (cmd === "/caveman" || cmd === "/caveman:caveman") {
+      if (!arg) {
+        const mode = resolveDefault();
+        return mode === "off" ? "off" : mode;
+      }
       if (arg === "off" || arg === "stop" || arg === "disable") return "off";
       if (arg === "wenyan-full") return "wenyan";
       if (isValidMode(arg) && !INDEPENDENT[arg]) return arg;
       return null; // unknown arg — don't silently overwrite
     }
-  }
-
-  // Natural-language activation
-  if (
-    /\b(activate|enable|turn on|start|talk like)\b.*\bcaveman\b/i.test(prompt) ||
-    /\bcaveman\b.*\b(mode|activate|enable|turn on|start)\b/i.test(prompt)
-  ) {
-    const mode = resolveDefault();
-    return mode === "off" ? null : mode;
   }
 
   return null;
