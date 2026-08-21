@@ -2,20 +2,21 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![pi extension](https://img.shields.io/badge/pi-extension-green.svg)](https://github.com/earendil-works/pi)
+[![npm version](https://img.shields.io/npm/v/@izhimu/pi-caveman.svg)](https://www.npmjs.com/package/@izhimu/pi-caveman)
 
-Caveman mode for [pi](https://github.com/earendil-works/pi). Ultra-compressed communication — cuts **65% output tokens** (measured), full technical accuracy.
+Caveman mode for [pi](https://github.com/earendil-works/pi) and [oh-my-pi](https://github.com/can1357/oh-my-pi). Ultra-compressed communication — cuts **65% output tokens** (measured) while maintaining full technical accuracy.
 
 Upstream: [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman)
 
 ## Features
 
-- **Auto-activates** on every pi session (default: `full` intensity)
-- **6 intensity levels** — from lite (professional but tight) to wenyan-ultra (classical Chinese extreme compression)
-- **Per-turn reinforcement** keeps model in caveman mode even after context compression
-- **Natural language triggers** — "talk like caveman", "be brief", "stop caveman"
-- **Status bar** shows current mode with color-coded indicator
-- **Configurable** via env var, repo-local, or user-global config
-- **Token savings stats** — tracks and displays estimated savings per session
+- **Auto-activates** on every pi / oh-my-pi session (default: `full` intensity)
+- **6 intensity levels** — from `lite` (professional, no filler) to `wenyan-ultra` (extreme classical Chinese compression)
+- **Per-turn reinforcement** keeps the model concise even as context grows
+- **Memory file compression** (`/caveman-compress`) — shrinks `AGENTS.md`, `CLAUDE.md`, and project notes with atomic backup and validation
+- **Natural language triggers** — "talk like caveman", "be brief", "stop caveman", "normal mode" (with quote disambiguation)
+- **Direct persistence** — `/caveman <mode>` instantly applies and saves default mode across sessions
+- **Token savings stats** — tracks session output tokens and estimated savings via `/caveman-status`
 
 ## Install
 
@@ -52,15 +53,16 @@ pi -e ./extensions/caveman.ts
 
 | Command | Effect |
 |---------|--------|
-| `/caveman` | Activate with default mode |
-| `/caveman lite` | Lite mode — no filler, keep articles |
-| `/caveman full` | Full mode — fragments OK, short synonyms |
-| `/caveman ultra` | Ultra mode — one word when one word enough |
-| `/caveman wenyan` | 文言文 mode (classical Chinese) |
-| `/caveman off` | Deactivate |
-| `/caveman-config` | Show/set default mode |
-| `/caveman-off` | Convenience alias for `/caveman off` |
-| `/caveman-status` | Show current mode and config |
+| `/caveman` | Activate with default mode (persists) |
+| `/caveman lite` | Lite mode — no filler/hedging, keep articles (persists) |
+| `/caveman full` | Full mode — fragments OK, short synonyms (default, persists) |
+| `/caveman ultra` | Ultra mode — one word when one word enough (persists) |
+| `/caveman wenyan` | 文言文 mode (classical Chinese terseness, persists) |
+| `/caveman off` | Deactivate caveman mode (persists) |
+| `/caveman-compress <file>` | Compress memory file (`AGENTS.md`, `todos.md`, etc.) |
+| `/caveman-status` | Show current mode, session tokens, and config paths |
+
+All `/caveman <mode>` commands automatically persist to user config (`~/.config/caveman/config.json` or `%APPDATA%\caveman\config.json`).
 
 Natural-language triggers also work: "talk like caveman", "stop caveman", "normal mode".
 
@@ -69,7 +71,7 @@ Natural-language triggers also work: "talk like caveman", "stop caveman", "norma
 | Level | Description |
 |-------|-------------|
 | **lite** | No filler/hedging. Keep articles + full sentences. Professional but tight |
-| **full** | Drop articles, fragments OK, short synonyms. Classic caveman |
+| **full** | Drop articles, fragments OK, short synonyms. Classic caveman (default) |
 | **ultra** | Strip conjunctions. One word when one word enough |
 | **wenyan-lite** | Semi-classical Chinese. Drop filler but keep grammar structure |
 | **wenyan-full** | Maximum classical Chinese terseness. 80-90% character reduction |
@@ -86,16 +88,16 @@ Natural-language triggers also work: "talk like caveman", "stop caveman", "norma
 
 ## Configuration
 
-Quickest way: `/caveman-config ultra` — writes user config, shows all available modes.
+Switch and persist directly with `/caveman <mode>` (e.g. `/caveman ultra`).
 
 Default mode resolution order:
 
 1. `CAVEMAN_DEFAULT_MODE` environment variable
 2. Repo-local: `.caveman/config.json` or `.caveman.json` (walks up to root)
-3. User: `~/.config/caveman/config.json` (or `%APPDATA%\caveman\config.json` on Windows)
-4. `full` (fallback)
+3. User config: `~/.config/caveman/config.json` (or `%APPDATA%\caveman\config.json` on Windows)
+4. `full` (fallback default)
 
-Manual config:
+Manual config file format:
 ```json
 {
   "defaultMode": "ultra"
@@ -104,43 +106,33 @@ Manual config:
 
 ## How It Works
 
-pi loads extensions from `~/.pi/agent/extensions/` and `.pi/extensions/`. This extension hooks into four lifecycle events:
+pi loads extensions and skills declared in `package.json#pi`. This extension hooks into four lifecycle events:
 
 1. **`session_start`** — writes mode flag, notifies user
-2. **`before_agent_start`** — injects reinforcement line per turn
-3. **`input`** — intercepts `/caveman` commands and natural-language triggers
-4. **`turn_end`** — updates status bar with savings stats
-
-The `SKILL.md` in `skills/caveman/` is auto-discovered by pi's skill system and loaded into system context.
+2. **`before_agent_start`** — injects filtered caveman rules per turn
+3. **`input`** — intercepts `/caveman` commands and natural-language triggers (with quoted-span protection)
+4. **`turn_end`** — accumulates token usage and savings stats
 
 ## Project Structure
 
 ```
 pi-caveman/
 ├── extensions/
-│   └── caveman.ts        # pi ExtensionAPI integration
+│   └── caveman.ts          # pi ExtensionAPI integration & mode manager
 ├── skills/
-│   └── caveman/
-│       └── SKILL.md      # Caveman behavior rules
-├── package.json          # pi package manifest
+│   ├── caveman/            # Core compression rules (SKILL.md)
+│   └── caveman-compress/   # Local memory file compression engine
+├── tests/                  # Validation test suite
+├── CHANGELOG.md
+├── package.json            # pi package manifest
 ├── tsconfig.json
 ├── LICENSE
 └── README.md
 ```
 
-## Flag File
+## Changelog
 
-Mode state persisted at `~/.pi/.caveman-active`. Mode transitions logged to `~/.pi/.caveman-mode-log.jsonl`.
-
-## Contributing
-
-Contributions welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feat/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feat/amazing-feature`)
-5. Open a Pull Request
+See [CHANGELOG.md](./CHANGELOG.md) for release history.
 
 ## License
 

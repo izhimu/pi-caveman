@@ -25,14 +25,14 @@ const __dirname = dirname(__filename);
 const VALID_MODES = [
   "lite", "full", "ultra",
   "wenyan-lite", "wenyan", "wenyan-full", "wenyan-ultra",
-  "commit", "review", "compress",
+  "compress",
 ] as const;
 
 type Mode = (typeof VALID_MODES)[number];
 
 // Modes with independent skills — not caveman intensity levels
 const INDEPENDENT: Record<string, true> = {
-  commit: true, review: true, compress: true,
+  compress: true,
 };
 
 // ── Session stats ───────────────────────────────────────────────────────────
@@ -217,6 +217,20 @@ function logModeChange(newMode: string | null): void {
 
 // ── Mode switching ──────────────────────────────────────────────────────────
 
+function saveUserConfigMode(mode: string): void {
+  try {
+    const configDir = cavemanConfigDir();
+    const cfgPath = join(configDir, "config.json");
+    if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
+    let existing: Record<string, unknown> = {};
+    if (existsSync(cfgPath)) {
+      try { existing = JSON.parse(readFileSync(cfgPath, "utf-8")); } catch {}
+    }
+    existing.defaultMode = mode;
+    writeFileSync(cfgPath, JSON.stringify(existing, null, 2) + "\n", { mode: 0o600 });
+  } catch {}
+}
+
 function applyMode(mode: string | "off"): void {
   if (mode === "off") { logModeChange(null); deleteFlag(); }
   else { logModeChange(mode); writeFlag(mode); }
@@ -242,58 +256,82 @@ function clearStatus(ui: UI): void {
 
 // ── Mode parsing (mirrors caveman hooks/caveman-parse.js) ───────────────────
 
+const QUOTED_SPAN_REGEX = /(["`])(?:(?!\1).)*\1/g;
+
+function normalizeModeArg(arg: string): string {
+  return (arg || "").replace(/^[^a-z0-9]+/, "").replace(/[^a-z0-9-]+$/, "");
+}
+
+interface ModeResolution {
+  action: "set" | "clear" | "unresolved";
+  mode?: string;
+  independentMode?: string;
+}
+
+function resolveModeArg(rawArg: string, getDefault: () => string): ModeResolution {
+  const arg = normalizeModeArg(rawArg);
+  if (!arg) {
+    if (rawArg) return { action: "unresolved" };
+    const mode = getDefault();
+    return mode === "off" ? { action: "clear" } : { action: "set", mode };
+  }
+  if (arg === "off" || arg === "stop" || arg === "disable") return { action: "clear" };
+  if (arg === "wenyan-full") return { action: "set", mode: "wenyan" };
+  if (isValidMode(arg) && !INDEPENDENT[arg]) return { action: "set", mode: arg };
+  if (INDEPENDENT[arg]) return { action: "unresolved", independentMode: arg };
+  return { action: "unresolved" };
+}
+
 function parseModeChange(promptRaw: string): string | "off" | null {
   let prompt = (promptRaw || "").trim();
   if (!prompt) return null;
 
-  prompt = prompt.toLowerCase().replace(/\s+/g, " ");
+  const collapsed = prompt.toLowerCase().replace(/\s+/g, " ");
+  const naturalLanguage = !prompt.startsWith("/");
+  const nlPrompt = naturalLanguage ? collapsed.replace(QUOTED_SPAN_REGEX, " ") : "";
 
   // Natural-language deactivation (checked first)
-  const wantsOff =
-    /\b(stop|disable|deactivate|quit|exit|kill)\s+(the\s+)?caveman\b/.test(prompt) ||
-    /\bcaveman(\s+mode)?\s+(off|stop|disabled?)\b/.test(prompt) ||
-    /\bturn\s+off\s+(the\s+)?caveman\b/.test(prompt) ||
-    /^(please\s+)?(go\s+|back\s+to\s+|switch\s+(back\s+)?to\s+|return\s+to\s+)?normal\s+mode\b/.test(prompt) ||
-    (/\bnormal\s+mode\b/.test(prompt) && /\bcaveman\b/.test(prompt));
+  if (naturalLanguage) {
+    const wantsOff =
+      /\b(stop|disable|deactivate|quit|exit|kill)\s+(the\s+)?caveman\b/.test(nlPrompt) ||
+      /\bcaveman(\s+mode)?\s+(off|stop|disabled?)\b/.test(nlPrompt) ||
+      /\bturn\s+off\s+(the\s+)?caveman\b/.test(nlPrompt) ||
+      /^(please\s+)?(go\s+|back\s+to\s+|switch\s+(back\s+)?to\s+|return\s+to\s+)?normal\s+mode\b/.test(nlPrompt) ||
+      (/\bnormal\s+mode\b/.test(nlPrompt) && /\bcaveman\b/.test(nlPrompt));
 
-  if (wantsOff) return "off";
+    if (wantsOff) return "off";
 
-  // Natural-language activation (exclude questions)
-  const isQuestion =
-    /^(what|whats|what's|how|why|when|where|who|does|do|did|is|are|can|could|would|should|tell me|explain)\b/.test(prompt);
+    // Natural-language activation (exclude questions)
+    const isQuestion =
+      /^(what|whats|what's|how|why|when|where|who|does|do|did|is|are|can|could|would|should|tell me|explain)\b/.test(nlPrompt);
 
-  if (!isQuestion) {
-    if (
-      /\b(activate|enable|start|turn on|use|switch to|want|give me)\b[^.]{0,40}\bcaveman\b/.test(prompt) ||
-      /\btalk like\b[^.]{0,40}\bcaveman\b/.test(prompt) ||
-      /\bcaveman\s+mode\s+(on|please|now)\b/.test(prompt) ||
-      /^caveman(\s+mode)?\s*[.!]*$/.test(prompt) ||
-      /\b(less tokens|fewer tokens|be brief|be terse|shorter answers)\b(?!\s+(in|for|on|about|when|during|with)\b)/.test(prompt)
-    ) {
-      const mode = resolveDefault();
-      return mode !== "off" ? mode : null;
+    if (!isQuestion) {
+      if (
+        /\b(activate|enable|start|turn on|use|switch to|want|give me)\b[^.]{0,40}\bcaveman\b/.test(nlPrompt) ||
+        /\btalk like\b[^.]{0,40}\bcaveman\b/.test(nlPrompt) ||
+        /\bcaveman\s+mode\s+(on|please|now)\b/.test(nlPrompt) ||
+        /^caveman(\s+mode)?\s*[.!]*$/.test(nlPrompt) ||
+        /\b(less tokens|fewer tokens|be brief|be terse|shorter answers)\b(?!\s+(in|for|on|about|when|during|with)\b)/.test(nlPrompt)
+      ) {
+        const mode = resolveDefault();
+        return mode !== "off" ? mode : null;
+      }
     }
   }
 
   // Slash-command (support bare and namespaced /caveman:<cmd>)
   if (prompt.startsWith("/caveman")) {
     const parts = prompt.split(/\s+/);
-    const cmd = parts[0];
-    const arg = parts[1] || "";
+    const cmd = parts[0].toLowerCase();
+    const rawArg = parts[1] || "";
 
-    if (cmd === "/caveman-commit" || cmd === "/caveman:caveman-commit")   return "commit";
-    if (cmd === "/caveman-review" || cmd === "/caveman:caveman-review")   return "review";
     if (cmd === "/caveman-compress" || cmd === "/caveman:caveman-compress") return "compress";
 
     if (cmd === "/caveman" || cmd === "/caveman:caveman") {
-      if (!arg) {
-        const mode = resolveDefault();
-        return mode === "off" ? "off" : mode;
-      }
-      if (arg === "off" || arg === "stop" || arg === "disable") return "off";
-      if (arg === "wenyan-full") return "wenyan";
-      if (isValidMode(arg) && !INDEPENDENT[arg]) return arg;
-      return null; // unknown arg — don't silently overwrite
+      const res = resolveModeArg(rawArg, resolveDefault);
+      if (res.action === "set" && res.mode) return res.mode;
+      if (res.action === "clear") return "off";
+      return null;
     }
   }
 
@@ -415,48 +453,50 @@ export default function cavemanExtension(pi: ExtensionAPI) {
 
   // ── /caveman command ──────────────────────────────────────────────────
   pi.registerCommand("caveman", {
-    description: "Switch caveman mode (lite|full|ultra|wenyan|off)",
+    description: "Switch and persist caveman mode (lite|full|ultra|wenyan|off)",
     getArgumentCompletions: (prefix) => getModeCompletions(prefix),
     handler: async (args, ctx) => {
-      const arg = (args || "").trim().toLowerCase();
+      const rawArg = (args || "").trim().toLowerCase();
 
-      // No arg → activate default
-      if (!arg) {
-        const mode = resolveDefault();
-        if (mode === "off") { deleteFlag(); return; }
+      // Bare /caveman -> activate default and persist
+      if (!rawArg) {
+        const def = resolveDefault();
+        const mode = def === "off" ? "full" : def;
         applyMode(mode);
+        saveUserConfigMode(mode);
         notifyMode(ctx, mode);
         return;
       }
 
-      // Off
-      if (arg === "off" || arg === "stop" || arg === "disable") {
+      const res = resolveModeArg(rawArg, resolveDefault);
+
+      if (res.action === "set" && res.mode) {
+        applyMode(res.mode);
+        saveUserConfigMode(res.mode);
+        notifyMode(ctx, res.mode);
+        return;
+      }
+
+      if (res.action === "clear") {
         sessionExplicitOff = true;
         applyMode("off");
+        saveUserConfigMode("off");
         clearStatus(ctx);
         return;
       }
 
-      // Wenyan alias
-      if (arg === "wenyan-full") {
-        applyMode("wenyan");
-        if (ctx.hasUI) {
-          ctx.ui.notify("caveman: wenyan-full", "info");
-        }
-        return;
-      }
-
-      // Valid mode
-      if (isValidMode(arg) && !INDEPENDENT[arg]) {
-        applyMode(arg);
-        notifyMode(ctx, arg);
+      if (res.independentMode && ctx.hasUI) {
+        ctx.ui.notify(
+          `"${res.independentMode}" is an independent skill. Use: /caveman-${res.independentMode}`,
+          "warning",
+        );
         return;
       }
 
       // Unknown
       if (ctx.hasUI) {
         ctx.ui.notify(
-          `unknown mode "${arg}". Use: lite|full|ultra|wenyan-lite|wenyan|wenyan-ultra|off`,
+          `unknown mode "${rawArg}". Use: lite|full|ultra|wenyan-lite|wenyan|wenyan-ultra|off`,
           "warning",
         );
       }
@@ -512,95 +552,6 @@ export default function cavemanExtension(pi: ExtensionAPI) {
     },
   });
 
-  // ── /caveman-config command ──────────────────────────────────────────
-  const INTENSITY_MODES = ["lite", "full", "ultra", "wenyan-lite", "wenyan", "wenyan-ultra", "off"];
-
-  pi.registerCommand("caveman-config", {
-    description: "Set default caveman mode for new sessions",
-    getArgumentCompletions: (prefix) => getModeCompletions(prefix),
-    handler: async (args, ctx) => {
-      const arg = (args || "").trim().toLowerCase();
-
-      // No arg → show current config + available options
-      if (!arg) {
-        const def = resolveDefault();
-        const configPath = join(cavemanConfigDir(), "config.json");
-        const repoConfig = findRepoConfig(process.cwd());
-
-        const lines: string[] = [
-          `Current default: ${def}`,
-          "",
-          "Available modes:",
-          "  lite        — no filler/hedging, keep articles + full sentences",
-          "  full        — drop articles, fragments OK, short synonyms (default)",
-          "  ultra       — one word when one word enough, no abbreviations",
-          "  wenyan-lite — semi-classical, keep grammar structure",
-          "  wenyan      — maximum classical terseness (文言文)",
-          "  wenyan-ultra — extreme abbreviation, classical feel",
-          "  off         — disabled by default",
-          "",
-          "Usage: /caveman-config <mode>",
-          `Config file: ${configPath}`,
-        ];
-        if (process.env.CAVEMAN_DEFAULT_MODE) {
-          lines.push(`Note: CAVEMAN_DEFAULT_MODE=${process.env.CAVEMAN_DEFAULT_MODE} overrides config file`);
-        }
-        if (repoConfig) {
-          lines.push(`Note: repo config at ${repoConfig} overrides user config`);
-        }
-
-        const msg = lines.join("\n");
-        if (ctx.hasUI) ctx.ui.notify(msg, "info");
-        pi.sendMessage({
-          customType: "caveman-config",
-          content: msg,
-          display: true,
-          attribution: "user",
-        }, { triggerTurn: false });
-        return;
-      }
-
-      // Validate
-      if (!isValidMode(arg) && arg !== "off") {
-        if (ctx.hasUI) {
-          ctx.ui.notify(
-            `unknown mode "${arg}". Available: ${INTENSITY_MODES.join(", ")}`,
-            "warning",
-          );
-        }
-        return;
-      }
-
-      // Write to user config
-      const configDir = cavemanConfigDir();
-      const cfgPath = join(configDir, "config.json");
-
-      try {
-        if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
-
-        let existing: Record<string, unknown> = {};
-        if (existsSync(cfgPath)) {
-          try { existing = JSON.parse(readFileSync(cfgPath, "utf-8")); } catch {}
-        }
-        existing.defaultMode = arg;
-        writeFileSync(cfgPath, JSON.stringify(existing, null, 2) + "\n", { mode: 0o600 });
-
-        const label = arg === "off" ? "off" : arg;
-        if (ctx.hasUI) {
-          ctx.ui.notify(`default mode set to: ${label}`, "info");
-          ctx.ui.notify(`config: ${cfgPath}`, "info");
-        }
-        pi.sendMessage({
-          customType: "caveman-config",
-          content: `Default mode saved: ${label}\nConfig: ${cfgPath}\nEffective on next session.`,
-          display: true,
-          attribution: "user",
-        }, { triggerTurn: false });
-      } catch (e) {
-        if (ctx.hasUI) ctx.ui.notify(`failed to write config: ${e}`, "error");
-      }
-    },
-  });
 
   // ── before_agent_start: per-turn reinforcement ────────────────────────
   // Injects full SKILL.md content (filtered to active mode) + reinforcement line.
@@ -638,6 +589,7 @@ export default function cavemanExtension(pi: ExtensionAPI) {
     if (change) {
       if (change === "off") sessionExplicitOff = true;
       applyMode(change);
+      saveUserConfigMode(change);
     }
   });
 
