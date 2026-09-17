@@ -2,6 +2,26 @@
 
 All notable changes to `@izhimu/pi-caveman` will be documented in this file.
 
+## [0.3.0] - 2026-09-17
+
+### Changed & Improved
+- **Upstream Core Sync**: Synchronized `skills/caveman/SKILL.md` with upstream Caveman ruleset:
+  - Added ASD-STE100 Simplified Technical English clarity register (sentences ≤20 words, imperative instructions, unambiguous terms).
+  - Added explicit reply-language precedence (honoring user/project language directives while preserving technical terms).
+  - Removed meta-announcements and boilerplate prefixes (`me caveman think`, `Caveman:` tags).
+  - Shortened skill description and token-optimized punctuation.
+- **Host Adaptation (pi & oh-my-pi)**:
+  - Dynamic host directory resolution (`~/.pi` vs `~/.omp`) for flags and logs.
+  - Gated prompt reinforcement: injects full ruleset on activation or mode change; subsequent turns use lightweight one-line reminders to save tokens and avoid prompt cache misses.
+  - Session persistence: preserves mid-session modes across compactions, reloads, and forks.
+  - Removed unsupported `attribution: "system"` property from injected custom messages.
+  - Added `"omp"` manifest and optional peer dependencies in `package.json`.
+- **Robust Mode Parsing**:
+  - Integrated upstream gap whitelist (`ACTIVATION_GAP`) to prevent false positives on phrases like "i want to start building a caveman-themed game".
+  - Added clause-bounded negation detection (`don't activate caveman` won't trigger; `don't use vim, activate caveman` works).
+- **Pruning**:
+  - Removed `caveman-compress` skill and Python scripts to keep the package lightweight and focused purely on core caveman communication.
+
 ## [0.2.1] - 2026-08-21
 
 ### Changed & Improved

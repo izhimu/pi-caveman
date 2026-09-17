@@ -1,9 +1,15 @@
 {
   "name": "@izhimu/pi-caveman",
-  "version": "0.2.1",
-  "description": "Caveman mode for pi — ultra-compressed communication, 65% output token savings",
+  "version": "0.3.0",
+  "description": "Caveman mode for pi and oh-my-pi — ultra-compressed communication, 65% output token savings",
   "type": "module",
-  "keywords": ["pi-package", "caveman", "token-savings", "compression"],
+  "keywords": [
+    "pi-package",
+    "omp-package",
+    "caveman",
+    "token-savings",
+    "compression"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/izhimu/pi-caveman.git"
@@ -11,14 +17,35 @@
   "author": "izhimu",
   "license": "MIT",
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@oh-my-pi/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    }
   },
   "scripts": {
     "test": "node --test --test-force-exit tests/*.test.mjs"
   },
   "pi": {
-    "extensions": ["./extensions"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "omp": {
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
   "files": [
     "extensions/",

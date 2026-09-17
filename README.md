@@ -12,9 +12,8 @@ Upstream: [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman)
 
 - **Auto-activates** on every pi / oh-my-pi session (default: `full` intensity)
 - **6 intensity levels** — from `lite` (professional, no filler) to `wenyan-ultra` (extreme classical Chinese compression)
-- **Per-turn reinforcement** keeps the model concise even as context grows
-- **Memory file compression** (`/caveman-compress`) — shrinks `AGENTS.md`, `CLAUDE.md`, and project notes with atomic backup and validation
-- **Natural language triggers** — "talk like caveman", "be brief", "stop caveman", "normal mode" (with quote disambiguation)
+- **Per-turn reinforcement** keeps the model concise without prompt bloat or cache misses
+- **Natural language triggers** — "talk like caveman", "be brief", "stop caveman", "normal mode" (with negation guard and gap whitelist)
 - **Direct persistence** — `/caveman <mode>` instantly applies and saves default mode across sessions
 - **Token savings stats** — tracks session output tokens and estimated savings via `/caveman-status`
 
@@ -22,31 +21,32 @@ Upstream: [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman)
 
 ### npm (recommended)
 
+For pi:
 ```bash
 pi install @izhimu/pi-caveman
+```
+
+For oh-my-pi (omp):
+```bash
+omp plugin install @izhimu/pi-caveman
 ```
 
 ### From git
 
 ```bash
-# Global
+# Global (pi)
 pi install git:github.com/izhimu/pi-caveman
 
-# Project-local (shared with team via .pi/settings.json)
+# Project-local (pi)
 pi install git:github.com/izhimu/pi-caveman -l
-```
-
-### From local path
-
-```bash
-pi install /path/to/pi-caveman
-pi install ./relative/path/to/pi-caveman
 ```
 
 ### Quick test (no install)
 
 ```bash
 pi -e ./extensions/caveman.ts
+# or
+omp -e ./extensions/caveman.ts
 ```
 
 ## Commands
@@ -59,7 +59,6 @@ pi -e ./extensions/caveman.ts
 | `/caveman ultra` | Ultra mode — one word when one word enough (persists) |
 | `/caveman wenyan` | 文言文 mode (classical Chinese terseness, persists) |
 | `/caveman off` | Deactivate caveman mode (persists) |
-| `/caveman-compress <file>` | Compress memory file (`AGENTS.md`, `todos.md`, etc.) |
 | `/caveman-status` | Show current mode, session tokens, and config paths |
 
 All `/caveman <mode>` commands automatically persist to user config (`~/.config/caveman/config.json` or `%APPDATA%\caveman\config.json`).
@@ -106,11 +105,11 @@ Manual config file format:
 
 ## How It Works
 
-pi loads extensions and skills declared in `package.json#pi`. This extension hooks into four lifecycle events:
+pi and oh-my-pi load extensions and skills declared in `package.json` (`pi` / `omp`). This extension hooks into four lifecycle events:
 
-1. **`session_start`** — writes mode flag, notifies user
-2. **`before_agent_start`** — injects filtered caveman rules per turn
-3. **`input`** — intercepts `/caveman` commands and natural-language triggers (with quoted-span protection)
+1. **`session_start`** — writes mode flag, notifies user, preserves mid-session modes across compactions/reloads
+2. **`before_agent_start`** — injects filtered caveman rules on activation/level-switch, and lightweight reminders on subsequent turns
+3. **`input`** — intercepts `/caveman` commands and natural-language triggers (with negation and clause-boundary guards)
 4. **`turn_end`** — accumulates token usage and savings stats
 
 ## Project Structure
@@ -118,13 +117,12 @@ pi loads extensions and skills declared in `package.json#pi`. This extension hoo
 ```
 pi-caveman/
 ├── extensions/
-│   └── caveman.ts          # pi ExtensionAPI integration & mode manager
+│   └── caveman.ts          # pi & omp ExtensionAPI integration & mode manager
 ├── skills/
-│   ├── caveman/            # Core compression rules (SKILL.md)
-│   └── caveman-compress/   # Local memory file compression engine
+│   └── caveman/            # Core compression rules (SKILL.md)
 ├── tests/                  # Validation test suite
 ├── CHANGELOG.md
-├── package.json            # pi package manifest
+├── package.json            # pi & omp package manifest
 ├── tsconfig.json
 ├── LICENSE
 └── README.md

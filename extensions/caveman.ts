@@ -1,9 +1,9 @@
-// pi-caveman — pi extension
+// pi-caveman — pi & oh-my-pi extension
 //
-// Caveman mode for pi: auto-activates per session, /caveman commands,
+// Caveman mode for pi & oh-my-pi: auto-activates per session, /caveman commands,
 // per-turn reinforcement injection, status bar integration.
 //
-// Flag file: ~/.pi/.caveman-active
+// Flag file: ~/.pi/.caveman-active or ~/.omp/.caveman-active
 // Config: ~/.config/caveman/config.json or CAVEMAN_DEFAULT_MODE env
 // Upstream: https://github.com/JuliusBrussee/caveman
 
@@ -25,15 +25,9 @@ const __dirname = dirname(__filename);
 const VALID_MODES = [
   "lite", "full", "ultra",
   "wenyan-lite", "wenyan", "wenyan-full", "wenyan-ultra",
-  "compress",
 ] as const;
 
 type Mode = (typeof VALID_MODES)[number];
-
-// Modes with independent skills — not caveman intensity levels
-const INDEPENDENT: Record<string, true> = {
-  compress: true,
-};
 
 // ── Session stats ───────────────────────────────────────────────────────────
 
@@ -98,11 +92,23 @@ function truncatePath(p: string, max = 40): string {
   return "…" + sep + tail;
 }
 
-// ── Paths ───────────────────────────────────────────────────────────────────
+// ── Paths & Host Resolution ─────────────────────────────────────────────────
 
-const xdg = process.env.XDG_CONFIG_HOME;
-const piDir = xdg ? join(xdg, "pi") : join(homedir(), ".pi");
-const flagPath = join(piDir, ".caveman-active");
+function resolveHostDir(): string {
+  const isOmp =
+    process.title === "omp" ||
+    Boolean(process.env.OMP_PROFILE) ||
+    process.env.PI_CONFIG_DIR === ".omp" ||
+    Boolean(process.env.OMP_AUTORESEARCH_DB_DIR) ||
+    (typeof process.argv[1] === "string" && process.argv[1].includes("@oh-my-pi"));
+  const dirName = isOmp ? "omp" : "pi";
+  const xdg = process.env.XDG_CONFIG_HOME;
+  return xdg ? join(xdg, dirName) : join(homedir(), `.${dirName}`);
+}
+
+function getFlagPath(): string {
+  return join(resolveHostDir(), ".caveman-active");
+}
 
 // ── Config resolution (mirrors caveman/src/hooks/caveman-config.js) ─────────
 
@@ -178,15 +184,32 @@ function resolveDefault(): string {
 // ── Flag I/O ────────────────────────────────────────────────────────────────
 
 function readFlag(): string | null {
+  const flagPath = getFlagPath();
   try {
-    const content = readFileSync(flagPath, "utf-8").trim();
-    return isValidMode(content) ? content : null;
-  } catch {
-    return null;
-  }
+    if (existsSync(flagPath)) {
+      const content = readFileSync(flagPath, "utf-8").trim();
+      return isValidMode(content) ? content : null;
+    }
+  } catch {}
+
+  // Fallback: cross-host check if running under omp but flag written in ~/.pi (or vice versa)
+  try {
+    const xdg = process.env.XDG_CONFIG_HOME;
+    const fallbackDir = flagPath.includes(".omp")
+      ? (xdg ? join(xdg, "pi") : join(homedir(), ".pi"))
+      : (xdg ? join(xdg, "omp") : join(homedir(), ".omp"));
+    const fallbackPath = join(fallbackDir, ".caveman-active");
+    if (existsSync(fallbackPath)) {
+      const content = readFileSync(fallbackPath, "utf-8").trim();
+      return isValidMode(content) ? content : null;
+    }
+  } catch {}
+
+  return null;
 }
 
 function writeFlag(mode: string): void {
+  const flagPath = getFlagPath();
   try {
     const dir = dirname(flagPath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -199,14 +222,23 @@ function writeFlag(mode: string): void {
 }
 
 function deleteFlag(): void {
+  const flagPath = getFlagPath();
   try { if (existsSync(flagPath)) unlinkSync(flagPath); } catch {}
+  try {
+    const xdg = process.env.XDG_CONFIG_HOME;
+    const fallbackDir = flagPath.includes(".omp")
+      ? (xdg ? join(xdg, "pi") : join(homedir(), ".pi"))
+      : (xdg ? join(xdg, "omp") : join(homedir(), ".omp"));
+    const fallbackPath = join(fallbackDir, ".caveman-active");
+    if (existsSync(fallbackPath)) unlinkSync(fallbackPath);
+  } catch {}
 }
 
 function logModeChange(newMode: string | null): void {
   try {
     const prev = readFlag();
     if (prev === newMode) return;
-    const dir = dirname(flagPath);
+    const dir = dirname(getFlagPath());
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const entry = JSON.stringify({
       ts: new Date().toISOString(), mode: newMode, prev,
@@ -239,7 +271,8 @@ function applyMode(mode: string | "off"): void {
 interface UI {
   hasUI: boolean;
   ui: {
-    notify(msg: string, level: string): void;
+    notify(msg: string, level?: "info" | "warning" | "error"): void;
+    setStatus?(key: string, text: string | undefined): void;
   };
 }
 
@@ -247,10 +280,12 @@ function notifyMode(ui: UI, mode: string): void {
   if (!ui.hasUI) return;
   const label = mode === "wenyan" ? "wenyan-full" : mode;
   ui.ui.notify(`caveman: ${label}`, "info");
+  ui.ui.setStatus?.("caveman", `caveman: ${label}`);
 }
 
 function clearStatus(ui: UI): void {
   if (!ui.hasUI) return;
+  ui.ui.setStatus?.("caveman", undefined);
   ui.ui.notify("caveman: off", "info");
 }
 
@@ -265,7 +300,6 @@ function normalizeModeArg(arg: string): string {
 interface ModeResolution {
   action: "set" | "clear" | "unresolved";
   mode?: string;
-  independentMode?: string;
 }
 
 function resolveModeArg(rawArg: string, getDefault: () => string): ModeResolution {
@@ -277,9 +311,54 @@ function resolveModeArg(rawArg: string, getDefault: () => string): ModeResolutio
   }
   if (arg === "off" || arg === "stop" || arg === "disable") return { action: "clear" };
   if (arg === "wenyan-full") return { action: "set", mode: "wenyan" };
-  if (isValidMode(arg) && !INDEPENDENT[arg]) return { action: "set", mode: arg };
-  if (INDEPENDENT[arg]) return { action: "unresolved", independentMode: arg };
+  if (isValidMode(arg)) return { action: "set", mode: arg };
   return { action: "unresolved" };
+}
+
+// Whitelist gap between activation verb and "caveman" to prevent false positives
+// on ordinary prose like "i want to start building a caveman-themed game" (#187)
+const ACTIVATION_VERBS = "(?:activate|enable|start|turn on|use|switch to|want|give me)";
+const ACTIVATION_GAP = "(?:\\s+(?:the|to|into|on|in|please|now|it|me|my|this|that|mode))*";
+const ACTIVATION_VERB_PHRASE = new RegExp(
+  "\\b" + ACTIVATION_VERBS + "\\b" + ACTIVATION_GAP + "\\s+caveman\\b"
+);
+const ACTIVATION_TALK_LIKE = /\btalk\s+like\s+(?:a\s+|an\s+|the\s+)?caveman\b/;
+
+// Negation guard: "don't activate caveman" must not activate caveman
+const NEGATOR = /\b(?:don['’]?t|do not|doesn['’]?t|does not|won['’]?t|will not|never|no need to|rather not)\b/;
+const CLAUSE_BOUNDARY = /[.;!?,:—–]|\s-+\s|\bbut\b|\bthen\b/g;
+
+function negatedBefore(text: string, index: number): boolean {
+  CLAUSE_BOUNDARY.lastIndex = 0;
+  let clauseStart = 0;
+  let m: RegExpExecArray | null;
+  while ((m = CLAUSE_BOUNDARY.exec(text)) !== null) {
+    if (m.index >= index) break;
+    clauseStart = m.index + m[0].length;
+  }
+  return NEGATOR.test(text.slice(clauseStart, index));
+}
+
+const BREVITY_TRIGGER = /\b(less tokens|fewer tokens|be brief|be terse|shorter answers)\b(?!\s+(in|for|on|about|when|during|with)\b)/;
+
+const ACTIVATION_TRIGGERS: RegExp[] = [
+  ACTIVATION_VERB_PHRASE,
+  ACTIVATION_TALK_LIKE,
+  /\bcaveman\s+mode\s+(on|please|now)\b/,
+  /^caveman(\s+mode)?\s*[.!]*$/,
+  BREVITY_TRIGGER,
+].map((re) => new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g"));
+
+function wantsActivation(text: string): boolean {
+  for (const re of ACTIVATION_TRIGGERS) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      if (!negatedBefore(text, m.index)) return true;
+      if (m.index === re.lastIndex) re.lastIndex++;
+    }
+  }
+  return false;
 }
 
 function parseModeChange(promptRaw: string): string | "off" | null {
@@ -305,17 +384,9 @@ function parseModeChange(promptRaw: string): string | "off" | null {
     const isQuestion =
       /^(what|whats|what's|how|why|when|where|who|does|do|did|is|are|can|could|would|should|tell me|explain)\b/.test(nlPrompt);
 
-    if (!isQuestion) {
-      if (
-        /\b(activate|enable|start|turn on|use|switch to|want|give me)\b[^.]{0,40}\bcaveman\b/.test(nlPrompt) ||
-        /\btalk like\b[^.]{0,40}\bcaveman\b/.test(nlPrompt) ||
-        /\bcaveman\s+mode\s+(on|please|now)\b/.test(nlPrompt) ||
-        /^caveman(\s+mode)?\s*[.!]*$/.test(nlPrompt) ||
-        /\b(less tokens|fewer tokens|be brief|be terse|shorter answers)\b(?!\s+(in|for|on|about|when|during|with)\b)/.test(nlPrompt)
-      ) {
-        const mode = resolveDefault();
-        return mode !== "off" ? mode : null;
-      }
+    if (!isQuestion && wantsActivation(nlPrompt)) {
+      const mode = resolveDefault();
+      return mode !== "off" ? mode : null;
     }
   }
 
@@ -324,8 +395,6 @@ function parseModeChange(promptRaw: string): string | "off" | null {
     const parts = prompt.split(/\s+/);
     const cmd = parts[0].toLowerCase();
     const rawArg = parts[1] || "";
-
-    if (cmd === "/caveman-compress" || cmd === "/caveman:caveman-compress") return "compress";
 
     if (cmd === "/caveman" || cmd === "/caveman:caveman") {
       const res = resolveModeArg(rawArg, resolveDefault);
@@ -428,12 +497,26 @@ function getModeCompletions(prefix: string) {
 // ── Extension factory ───────────────────────────────────────────────────────
 
 export default function cavemanExtension(pi: ExtensionAPI) {
+  let lastInjectedMode: string | null = null;
+
   // ── session_start: auto-activate ──────────────────────────────────────
-  pi.on("session_start", async (_event, ctx) => {
-    sessionStats = { turns: 0, outputTokens: 0, cacheReadTokens: 0, inputTokens: 0 };
-    sessionExplicitOff = false;
-    const mode = resolveDefault();
-    if (mode === "off") { deleteFlag(); return; }
+  pi.on("session_start", async (event, ctx) => {
+    const e = event as Record<string, unknown> | undefined;
+    const reason = e?.reason as string | undefined;
+    const isContinuation = reason === "resume" || reason === "reload" || reason === "fork";
+    if (!isContinuation) {
+      sessionStats = { turns: 0, outputTokens: 0, cacheReadTokens: 0, inputTokens: 0 };
+      sessionExplicitOff = false;
+      lastInjectedMode = null;
+    }
+
+    let mode = readFlag();
+    if (!mode && !sessionExplicitOff) mode = resolveDefault();
+    if (!mode || mode === "off") {
+      deleteFlag();
+      clearStatus(ctx);
+      return;
+    }
     applyMode(mode);
     notifyMode(ctx, mode);
   });
@@ -462,6 +545,8 @@ export default function cavemanExtension(pi: ExtensionAPI) {
       if (!rawArg) {
         const def = resolveDefault();
         const mode = def === "off" ? "full" : def;
+        sessionExplicitOff = false;
+        lastInjectedMode = null;
         applyMode(mode);
         saveUserConfigMode(mode);
         notifyMode(ctx, mode);
@@ -471,6 +556,8 @@ export default function cavemanExtension(pi: ExtensionAPI) {
       const res = resolveModeArg(rawArg, resolveDefault);
 
       if (res.action === "set" && res.mode) {
+        sessionExplicitOff = false;
+        lastInjectedMode = null;
         applyMode(res.mode);
         saveUserConfigMode(res.mode);
         notifyMode(ctx, res.mode);
@@ -479,17 +566,10 @@ export default function cavemanExtension(pi: ExtensionAPI) {
 
       if (res.action === "clear") {
         sessionExplicitOff = true;
+        lastInjectedMode = null;
         applyMode("off");
         saveUserConfigMode("off");
         clearStatus(ctx);
-        return;
-      }
-
-      if (res.independentMode && ctx.hasUI) {
-        ctx.ui.notify(
-          `"${res.independentMode}" is an independent skill. Use: /caveman-${res.independentMode}`,
-          "warning",
-        );
         return;
       }
 
@@ -537,7 +617,7 @@ export default function cavemanExtension(pi: ExtensionAPI) {
       }
       if (existsSync(configPath)) configLines.push(` user  ${DIM}${truncatePath(configPath)}${RST}`);
       if (repoConfig) configLines.push(` repo  ${DIM}${truncatePath(repoConfig)}${RST}`);
-      configLines.push(` flag  ${DIM}${truncatePath(flagPath)}${RST}`);
+      configLines.push(` flag  ${DIM}${truncatePath(getFlagPath())}${RST}`);
 
       if (configLines.length) {
         lines.push("", ...configLines);
@@ -552,30 +632,36 @@ export default function cavemanExtension(pi: ExtensionAPI) {
     },
   });
 
-
   // ── before_agent_start: per-turn reinforcement ────────────────────────
-  // Injects full SKILL.md content (filtered to active mode) + reinforcement line.
-  // Mirrors caveman-activate.js behavior: the model sees the complete ruleset
-  // on every turn, not just a one-line reminder.
+  // Injects full SKILL.md content (filtered to active mode) on activation / level-switch.
+  // Subsequent continuing turns use a lightweight single-line reminder to preserve tokens & prompt cache.
   pi.on("before_agent_start", async (_event, _ctx) => {
     let active = readFlag();
     if (!active && !sessionExplicitOff) active = resolveDefault();
-    if (!active || active === "off" || INDEPENDENT[active]) return null;
+    if (!active || active === "off") {
+      lastInjectedMode = null;
+      return null;
+    }
 
-    const skillContent = loadFilteredSkillContent(active);
-    const header = `CAVEMAN MODE ACTIVE — level: ${active === "wenyan" ? "wenyan-full" : active}\n\n`;
+    const modeChanged = active !== lastInjectedMode;
+    lastInjectedMode = active;
 
-    // If SKILL.md found, inject full filtered content; fall back to reinforcement line
-    const content = skillContent
-      ? header + skillContent
-      : reinforcementLine(active);
+    let content: string;
+    if (modeChanged) {
+      const skillContent = loadFilteredSkillContent(active);
+      const header = `CAVEMAN MODE ACTIVE — level: ${active === "wenyan" ? "wenyan-full" : active}\n\n`;
+      content = skillContent
+        ? header + skillContent
+        : reinforcementLine(active);
+    } else {
+      content = reinforcementLine(active);
+    }
 
     return {
       message: {
         customType: "caveman-reinforcement",
         content,
         display: false,
-        attribution: "system",
       },
     };
   });
@@ -587,10 +673,15 @@ export default function cavemanExtension(pi: ExtensionAPI) {
     if (typeof text !== "string") return;
     const change = parseModeChange(text);
     if (change) {
-      if (change === "off") sessionExplicitOff = true;
+      if (change === "off") {
+        sessionExplicitOff = true;
+        lastInjectedMode = null;
+      } else {
+        sessionExplicitOff = false;
+        lastInjectedMode = null;
+      }
       applyMode(change);
       saveUserConfigMode(change);
     }
   });
-
 }
