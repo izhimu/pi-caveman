@@ -1,149 +1,86 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import {
+  VALID_MODES,
+  canonicalMode,
+  resolveModeArg,
+  parseModeChange,
+  loadSkillContent,
+  getThesisLine,
+  reinforcementLine,
+  estimateSavings,
+} from "../extensions/caveman.ts";
 
-// Verify SKILL.md parsing and intensity filtering logic mirrors extension behavior
-test("SKILL.md exists and can be filtered per mode", () => {
-  const skillPath = join("skills", "caveman", "SKILL.md");
-  assert.ok(existsSync(skillPath));
-  const raw = readFileSync(skillPath, "utf-8");
-  const body = raw.replace(/^---[\s\S]*?---\s*/, "");
-
-  for (const mode of ["lite", "full", "ultra", "wenyan-lite", "wenyan-full", "wenyan-ultra"]) {
-    const lines = body.split("\n").reduce((acc, line) => {
-      const tableRowMatch = line.match(/^\|\s*\*\*(\S+?)\*\*\s*\|/);
-      if (tableRowMatch) {
-        if (tableRowMatch[1] === mode) acc.push(line);
-        return acc;
-      }
-      const exampleMatch = line.match(/^- (\S+?):\s/);
-      if (exampleMatch) {
-        if (exampleMatch[1] === mode) acc.push(line);
-        return acc;
-      }
-      acc.push(line);
-      return acc;
-    }, []);
-
-    const filtered = lines.join("\n");
-    assert.ok(filtered.length > 500, `filtered ruleset for ${mode} should have content`);
-    assert.ok(filtered.includes(`| **${mode}** |`), `should contain table row for ${mode}`);
-    // Should NOT contain rows for other modes
-    for (const other of ["lite", "full", "ultra", "wenyan-lite", "wenyan-full", "wenyan-ultra"]) {
-      if (other !== mode) {
-        assert.ok(!filtered.includes(`| **${other}** |`), `should NOT contain table row for ${other}`);
-      }
-    }
+test("all three skills can be loaded directly without filtering", () => {
+  for (const mode of VALID_MODES) {
+    const content = loadSkillContent(mode);
+    assert.ok(content, `skill content for ${mode} should exist`);
+    assert.ok(content.length > 200, `skill content for ${mode} should be non-trivial`);
+    // Should NOT have raw YAML frontmatter markers
+    assert.ok(!content.startsWith("---"), `skill content for ${mode} should strip frontmatter`);
   }
+
+  // caveman has the 9 rules and answer first
+  const caveman = loadSkillContent("caveman");
+  assert.ok(caveman.includes("Answer first"));
+  assert.ok(caveman.includes("ASD-STE100"));
+
+  // ultracave is fragments only
+  const ultracave = loadSkillContent("ultracave");
+  assert.ok(ultracave.includes("Ultracave is caveman with the grammar stripped"));
+
+  // megacave is Classical Chinese
+  const megacave = loadSkillContent("megacave");
+  assert.ok(megacave.includes("以文言答"));
 });
 
-// Test mode parsing logic
-const QUOTED_SPAN_REGEX = /(["`])(?:(?!\1).)*\1/g;
-const ACTIVATION_VERBS = "(?:activate|enable|start|turn on|use|switch to|want|give me)";
-const ACTIVATION_GAP = "(?:\\s+(?:the|to|into|on|in|please|now|it|me|my|this|that|mode))*";
-const ACTIVATION_VERB_PHRASE = new RegExp(
-  "\\b" + ACTIVATION_VERBS + "\\b" + ACTIVATION_GAP + "\\s+caveman\\b"
-);
-const ACTIVATION_TALK_LIKE = /\btalk\s+like\s+(?:a\s+|an\s+|the\s+)?caveman\b/;
-const NEGATOR = /\b(?:don['’]?t|do not|doesn['’]?t|does not|won['’]?t|will not|never|no need to|rather not)\b/;
-const CLAUSE_BOUNDARY = /[.;!?,:—–]|\s-+\s|\bbut\b|\bthen\b/g;
+test("canonicalMode normalizes current and legacy modes", () => {
+  assert.equal(canonicalMode("caveman"), "caveman");
+  assert.equal(canonicalMode("ultracave"), "ultracave");
+  assert.equal(canonicalMode("megacave"), "megacave");
 
-function negatedBefore(text, index) {
-  CLAUSE_BOUNDARY.lastIndex = 0;
-  let clauseStart = 0;
-  let m;
-  while ((m = CLAUSE_BOUNDARY.exec(text)) !== null) {
-    if (m.index >= index) break;
-    clauseStart = m.index + m[0].length;
-  }
-  return NEGATOR.test(text.slice(clauseStart, index));
-}
+  // Legacy mappings
+  assert.equal(canonicalMode("full"), "caveman");
+  assert.equal(canonicalMode("lite"), "caveman");
+  assert.equal(canonicalMode("ultra"), "ultracave");
+  assert.equal(canonicalMode("wenyan"), "megacave");
+  assert.equal(canonicalMode("wenyan-lite"), "megacave");
+  assert.equal(canonicalMode("wenyan-full"), "megacave");
+  assert.equal(canonicalMode("wenyan-ultra"), "megacave");
 
-const BREVITY_TRIGGER = /\b(less tokens|fewer tokens|be brief|be terse|shorter answers)\b(?!\s+(in|for|on|about|when|during|with)\b)/;
+  // Invalid / off
+  assert.equal(canonicalMode("unknown"), null);
+  assert.equal(canonicalMode("off"), null);
+});
 
-const ACTIVATION_TRIGGERS = [
-  ACTIVATION_VERB_PHRASE,
-  ACTIVATION_TALK_LIKE,
-  /\bcaveman\s+mode\s+(on|please|now)\b/,
-  /^caveman(\s+mode)?\s*[.!]*$/,
-  BREVITY_TRIGGER,
-].map((re) => new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g"));
+test("resolveModeArg resolves modes, status, and clear", () => {
+  const getDefault = () => "caveman";
 
-function wantsActivation(text) {
-  for (const re of ACTIVATION_TRIGGERS) {
-    re.lastIndex = 0;
-    let m;
-    while ((m = re.exec(text)) !== null) {
-      if (!negatedBefore(text, m.index)) return true;
-      if (m.index === re.lastIndex) re.lastIndex++;
-    }
-  }
-  return false;
-}
+  assert.deepEqual(resolveModeArg("", getDefault), { action: "set", mode: "caveman" });
+  assert.deepEqual(resolveModeArg("off", getDefault), { action: "clear" });
+  assert.deepEqual(resolveModeArg("stop", getDefault), { action: "clear" });
+  assert.deepEqual(resolveModeArg("status", getDefault), { action: "status" });
 
-function normalizeModeArg(arg) {
-  return (arg || "").replace(/^[^a-z0-9]+/, "").replace(/[^a-z0-9-]+$/, "");
-}
+  assert.deepEqual(resolveModeArg("caveman", getDefault), { action: "set", mode: "caveman" });
+  assert.deepEqual(resolveModeArg("ultracave", getDefault), { action: "set", mode: "ultracave" });
+  assert.deepEqual(resolveModeArg("megacave", getDefault), { action: "set", mode: "megacave" });
 
-const VALID_MODES = ["lite", "full", "ultra", "wenyan-lite", "wenyan", "wenyan-full", "wenyan-ultra"];
+  // Legacy aliases
+  assert.deepEqual(resolveModeArg("full", getDefault), { action: "set", mode: "caveman" });
+  assert.deepEqual(resolveModeArg("ultra", getDefault), { action: "set", mode: "ultracave" });
+  assert.deepEqual(resolveModeArg("wenyan", getDefault), { action: "set", mode: "megacave" });
 
-function resolveModeArg(rawArg) {
-  const arg = normalizeModeArg(rawArg);
-  if (!arg) return { action: "set", mode: "full" };
-  if (arg === "off" || arg === "stop" || arg === "disable") return { action: "clear" };
-  if (arg === "wenyan-full") return { action: "set", mode: "wenyan" };
-  if (VALID_MODES.includes(arg)) return { action: "set", mode: arg };
-  return { action: "unresolved" };
-}
-
-function parseModeChange(promptRaw) {
-  let prompt = (promptRaw || "").trim();
-  if (!prompt) return null;
-
-  const collapsed = prompt.toLowerCase().replace(/\s+/g, " ");
-  const naturalLanguage = !prompt.startsWith("/");
-  const nlPrompt = naturalLanguage ? collapsed.replace(QUOTED_SPAN_REGEX, " ") : "";
-
-  if (naturalLanguage) {
-    const wantsOff =
-      /\b(stop|disable|deactivate|quit|exit|kill)\s+(the\s+)?caveman\b/.test(nlPrompt) ||
-      /\bcaveman(\s+mode)?\s+(off|stop|disabled?)\b/.test(nlPrompt) ||
-      /\bturn\s+off\s+(the\s+)?caveman\b/.test(nlPrompt) ||
-      /^(please\s+)?(go\s+|back\s+to\s+|switch\s+(back\s+)?to\s+|return\s+to\s+)?normal\s+mode\b/.test(nlPrompt) ||
-      (/\bnormal\s+mode\b/.test(nlPrompt) && /\bcaveman\b/.test(nlPrompt));
-
-    if (wantsOff) return "off";
-
-    const isQuestion =
-      /^(what|whats|what's|how|why|when|where|who|does|do|did|is|are|can|could|would|should|tell me|explain)\b/.test(nlPrompt);
-
-    if (!isQuestion && wantsActivation(nlPrompt)) {
-      return "full";
-    }
-  }
-
-  if (prompt.startsWith("/caveman")) {
-    const parts = prompt.split(/\s+/);
-    const cmd = parts[0].toLowerCase();
-    const rawArg = parts[1] || "";
-
-    if (cmd === "/caveman" || cmd === "/caveman:caveman") {
-      const res = resolveModeArg(rawArg);
-      if (res.action === "set" && res.mode) return res.mode;
-      if (res.action === "clear") return "off";
-      return null;
-    }
-  }
-
-  return null;
-}
+  // Unknown
+  assert.deepEqual(resolveModeArg("invalid-mode", getDefault), { action: "unresolved" });
+});
 
 test("parseModeChange handles natural language activations", () => {
-  assert.equal(parseModeChange("talk like caveman"), "full");
-  assert.equal(parseModeChange("please switch to caveman mode"), "full");
-  assert.equal(parseModeChange("be brief"), "full");
-  assert.equal(parseModeChange("less tokens"), "full");
+  assert.equal(parseModeChange("talk like caveman"), "caveman");
+  assert.equal(parseModeChange("please switch to caveman mode"), "caveman");
+  assert.equal(parseModeChange("be brief"), "caveman");
+  assert.equal(parseModeChange("less tokens"), "caveman");
+  assert.equal(parseModeChange("activate ultracave"), "ultracave");
+  assert.equal(parseModeChange("switch to megacave"), "megacave");
 });
 
 test("parseModeChange rejects false positives and questions", () => {
@@ -155,7 +92,7 @@ test("parseModeChange rejects false positives and questions", () => {
 test("parseModeChange handles negation properly", () => {
   assert.equal(parseModeChange("don't activate caveman"), null);
   assert.equal(parseModeChange("never use caveman"), null);
-  assert.equal(parseModeChange("don't use vim, activate caveman"), "full");
+  assert.equal(parseModeChange("don't use vim, activate caveman"), "caveman");
 });
 
 test("parseModeChange handles deactivations", () => {
@@ -166,10 +103,57 @@ test("parseModeChange handles deactivations", () => {
 });
 
 test("parseModeChange handles slash commands", () => {
-  assert.equal(parseModeChange("/caveman"), "full");
-  assert.equal(parseModeChange("/caveman ultra"), "ultra");
-  assert.equal(parseModeChange("/caveman lite"), "lite");
-  assert.equal(parseModeChange("/caveman wenyan"), "wenyan");
+  assert.equal(parseModeChange("/caveman"), "caveman");
+  assert.equal(parseModeChange("/caveman ultracave"), "ultracave");
+  assert.equal(parseModeChange("/caveman megacave"), "megacave");
+  assert.equal(parseModeChange("/caveman ultra"), "ultracave");
+  assert.equal(parseModeChange("/caveman lite"), "caveman");
+  assert.equal(parseModeChange("/caveman wenyan"), "megacave");
   assert.equal(parseModeChange("/caveman off"), "off");
-  assert.equal(parseModeChange("/caveman:caveman ultra"), "ultra");
+
+  // Direct slash commands
+  assert.equal(parseModeChange("/ultracave"), "ultracave");
+  assert.equal(parseModeChange("/megacave"), "megacave");
+  assert.equal(parseModeChange("/caveman:ultracave"), "ultracave");
+  assert.equal(parseModeChange("/caveman:megacave"), "megacave");
+  assert.equal(parseModeChange("/caveman:caveman ultra"), "ultracave");
+});
+
+test("thesis and reinforcement line match upstream specification", () => {
+  assert.equal(
+    getThesisLine("caveman"),
+    "Respond terse like smart caveman. All technical substance stay. Only fluff die.",
+  );
+  assert.equal(
+    getThesisLine("ultracave"),
+    "Respond terse like smart caveman. All technical substance stay. Only fluff die. Then cut again.",
+  );
+  assert.equal(
+    getThesisLine("megacave"),
+    "以文言答。技術之實皆存，唯贅言去之。",
+  );
+
+  for (const mode of VALID_MODES) {
+    const line = reinforcementLine(mode);
+    assert.ok(line.startsWith(`CAVEMAN MODE ACTIVE (${mode}).`));
+    assert.ok(line.includes("Answer only what was asked"));
+    assert.ok(line.includes("Technical terms, code, commands, paths, and errors stay exact."));
+  }
+});
+
+test("estimateSavings computes savings for modes and aliases", () => {
+  const cavemanSavings = estimateSavings(1000, "caveman");
+  assert.equal(cavemanSavings.pct, 65);
+  assert.equal(cavemanSavings.estWithout, 2857);
+  assert.equal(cavemanSavings.estSaved, 1857);
+
+  const ultraSavings = estimateSavings(1000, "ultracave");
+  assert.equal(ultraSavings.pct, 75);
+
+  const megaSavings = estimateSavings(1000, "megacave");
+  assert.equal(megaSavings.pct, 80);
+
+  // Legacy alias
+  const fullSavings = estimateSavings(1000, "full");
+  assert.equal(fullSavings.pct, 65);
 });

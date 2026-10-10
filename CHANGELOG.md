@@ -2,6 +2,28 @@
 
 All notable changes to `@izhimu/pi-caveman` will be documented in this file.
 
+## [0.4.0] - 2026-10-10
+
+### Added & Changed
+- **Three Skills, One Mode Model (Upstream 3.2.0 Sync)**:
+  - Replaced the 6 intensity levels with 3 dedicated standalone skills:
+    - `caveman`: Default smart terse voice, adhering to 9 core rules.
+    - `ultracave`: Grammar stripped, fragments only, each fact once.
+    - `megacave`: Classical Chinese (文言文) register with character minimization.
+  - Shipped `skills/ultracave/` and `skills/megacave/` skills directories alongside `skills/caveman/`.
+  - Added `canonicalMode()` to seamlessly map legacy mode names (`full`, `lite`, `ultra`, `wenyan*`) to the new three-skill architecture.
+- **Upstream 3.2.0 Core Rules**:
+  - Rule 6: Retain existing file comments in full unless explicitly asked to modify them.
+  - Rule 7: Bounded tool runs — no narration between routine tool calls; single-line phase notices.
+  - Exceptions: Always use full sentences when offering options or asking clarifying questions to the user.
+  - Updated reinforcement thesis line extraction to synchronize with skill definitions.
+- **Commands & UX**:
+  - Added dedicated `/ultracave` and `/megacave` slash commands.
+  - Supported `/caveman status` as a first-class subcommand.
+  - Non-permanent status bar: clears status bar on mode changes and session start while providing clean transient toast notifications (`ui.notify`).
+- **Testing**:
+  - Comprehensive unit test suite covering mode canonicalization, three-skill loading, negation boundaries, and slash command parsing without logic duplication.
+
 ## [0.3.0] - 2026-09-17
 
 ### Changed & Improved

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-const SKILLS = ["caveman"];
+const SKILLS = ["caveman", "ultracave", "megacave"];
 
 for (const skillName of SKILLS) {
   test(`skill ${skillName} has valid SKILL.md and frontmatter`, () => {
