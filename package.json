@@ -1,6 +1,6 @@
 {
   "name": "@izhimu/pi-caveman",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Caveman mode for pi and oh-my-pi — ultra-compressed communication, 65% output token savings",
   "type": "module",
   "keywords": [

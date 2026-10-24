@@ -114,11 +114,12 @@ test("parseModeChange handles slash commands", () => {
   assert.equal(parseModeChange("/caveman wenyan"), "megacave");
   assert.equal(parseModeChange("/caveman off"), "off");
 
-  // Direct slash commands
-  assert.equal(parseModeChange("/ultracave"), "ultracave");
-  assert.equal(parseModeChange("/megacave"), "megacave");
-  assert.equal(parseModeChange("/caveman:ultracave"), "ultracave");
-  assert.equal(parseModeChange("/caveman:megacave"), "megacave");
+  // Standalone /ultracave and /megacave commands were removed;
+  // only /caveman <mode> (and its plugin-namespaced form) switches modes
+  assert.equal(parseModeChange("/ultracave"), null);
+  assert.equal(parseModeChange("/megacave"), null);
+  assert.equal(parseModeChange("/caveman:ultracave"), null);
+  assert.equal(parseModeChange("/caveman:megacave"), null);
   assert.equal(parseModeChange("/caveman:caveman ultra"), "ultracave");
 });
 

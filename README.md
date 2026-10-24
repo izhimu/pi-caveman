@@ -15,7 +15,7 @@ Upstream: [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman)
 - **9 core upstream 3.2.0 rules** — answer first, kill ceremony, STE clarity, preserved comments, bounded tool runs
 - **Per-turn reinforcement** keeps the model concise without prompt bloat or cache misses
 - **Natural language triggers** — "talk like caveman", "be brief", "stop caveman", "normal mode" (with negation guard and gap whitelist)
-- **Direct persistence & aliases** — `/caveman`, `/ultracave`, `/megacave` instantly apply and persist; legacy aliases (`full`, `lite`, `ultra`, `wenyan`) seamlessly mapped
+- **Direct persistence & aliases** — `/caveman <mode>` instantly applies and persists; legacy aliases (`full`, `lite`, `ultra`, `wenyan`) seamlessly mapped
 - **Token savings stats** — tracks session output tokens and estimated savings via `/caveman status` or `/caveman-status`
 ## Install
 
@@ -55,13 +55,11 @@ omp -e ./extensions/caveman.ts
 |---------|--------|
 | `/caveman` | Activate default caveman mode (persists) |
 | `/caveman <mode>` | Switch mode: `caveman`, `ultracave`, `megacave`, `off`, `status` (persists) |
-| `/ultracave` | Switch directly to ultracave mode (maximum compression, fragments only) |
-| `/megacave` | Switch directly to megacave mode (Classical Chinese 文言文) |
 | `/caveman status` | Show current mode, session token usage, and config paths |
 | `/caveman-status` | Alias for `/caveman status` |
 | `/caveman off` | Deactivate caveman mode (persists) |
 
-All `/caveman <mode>`, `/ultracave`, and `/megacave` commands automatically persist to user config (`~/.config/caveman/config.json` or `%APPDATA%\caveman\config.json`). Legacy aliases (`full`, `lite`, `ultra`, `wenyan*`) are transparently mapped.
+All `/caveman` mode switches automatically persist to user config (`~/.config/caveman/config.json` or `%APPDATA%\caveman\config.json`). Legacy aliases (`full`, `lite`, `ultra`, `wenyan*`) are transparently mapped.
 
 Natural-language triggers also work: "talk like caveman", "be brief", "less tokens", "stop caveman", "normal mode".
 
@@ -104,7 +102,7 @@ pi and oh-my-pi load extensions and skills declared in `package.json` (`pi` / `o
 
 1. **`session_start`** — writes mode flag, notifies user via toast, preserves mid-session modes across compactions/reloads
 2. **`before_agent_start`** — injects full skill ruleset on activation/mode-switch, and lightweight reminders on subsequent turns
-3. **`input`** — intercepts `/caveman`, `/ultracave`, `/megacave` commands and natural-language triggers (with negation and clause-boundary guards)
+3. **`input`** — intercepts `/caveman` commands and natural-language triggers (with negation and clause-boundary guards)
 4. **`turn_end`** — accumulates token usage and savings stats
 
 ## Project Structure

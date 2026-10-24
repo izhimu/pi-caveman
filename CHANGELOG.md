@@ -2,6 +2,11 @@
 
 All notable changes to `@izhimu/pi-caveman` will be documented in this file.
 
+## [0.5.0] - 2026-10-24
+
+### Removed
+- **Standalone `/ultracave` and `/megacave` slash commands** (including their plugin-namespaced `/caveman:ultracave` / `/caveman:megacave` forms and the `input` interception branches). The modes themselves are unchanged and remain reachable via `/caveman ultracave`, `/caveman megacave` (plus legacy aliases `ultra`, `wenyan*`) and natural-language triggers.
+
 ## [0.4.1] - 2026-10-24
 
 ### Fixed

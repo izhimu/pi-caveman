@@ -480,12 +480,6 @@ export function parseModeChange(promptRaw: string): Mode | "off" | null {
     const cmd = parts[0].toLowerCase();
     const rawArg = parts[1] || "";
 
-    if (cmd === "/ultracave" || cmd === "/caveman:ultracave") {
-      return "ultracave";
-    }
-    if (cmd === "/megacave" || cmd === "/caveman:megacave") {
-      return "megacave";
-    }
     if (cmd === "/caveman" || cmd === "/caveman:caveman") {
       const res = resolveModeArg(rawArg, resolveDefault);
       if (res.action === "set" && res.mode) return res.mode;
@@ -678,30 +672,6 @@ export default function cavemanExtension(pi: ExtensionAPI) {
           "warning",
         );
       }
-    },
-  });
-
-  // ── /ultracave command ────────────────────────────────────────────────
-  pi.registerCommand("ultracave", {
-    description: "Switch to ultracave mode (maximum compression, fragments only)",
-    handler: async (_args, ctx) => {
-      sessionExplicitOff = false;
-      lastInjectedMode = null;
-      applyMode("ultracave");
-      saveUserConfigMode("ultracave");
-      notifyMode(ctx, "ultracave");
-    },
-  });
-
-  // ── /megacave command ─────────────────────────────────────────────────
-  pi.registerCommand("megacave", {
-    description: "Switch to megacave mode (Classical Chinese 文言文)",
-    handler: async (_args, ctx) => {
-      sessionExplicitOff = false;
-      lastInjectedMode = null;
-      applyMode("megacave");
-      saveUserConfigMode("megacave");
-      notifyMode(ctx, "megacave");
     },
   });
 
