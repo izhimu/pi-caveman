@@ -2,6 +2,17 @@
 
 All notable changes to `@izhimu/pi-caveman` will be documented in this file.
 
+## [0.4.1] - 2026-10-24
+
+### Fixed
+- **Host API conformance for `sendMessage`**: the `/caveman status` summary is now sent as `{ customType: "caveman-status", content, display: false }`, matching pi's `SendMessageHandler` payload (which requires `customType`/`display` and has no `attribution` field). The old call passed an unsupported `attribution: "user"` and omitted `customType`, so pi persisted a session entry with `customType: undefined`. oh-my-pi accepts both shapes.
+- **Session boundary handling**:
+  - Fixed a dead-code bug: `reason === "resume" || reason === "reload" || "fork"` was always truthy (the last operand is a non-empty string literal), so session stats never reset on fresh sessions.
+  - oh-my-pi adaptation: its `session_start` carries no `reason` and fires only on initial load; mid-process switches arrive as a separate `session_switch` event with reason `new|resume|fork`. The extension now handles both events; on pi the extra registration is a no-op (its runtime accepts arbitrary event names and never dispatches it).
+
+### Testing
+- Added mock-`ExtensionAPI` runtime tests: status message payload shape (including the `attribution` regression guard) and session stats continuity across `reload`/`resume`/`fork`/`session_switch` boundaries, sandboxed via `XDG_CONFIG_HOME` so they never touch `~/.pi`, `~/.omp`, or the machine caveman config.
+
 ## [0.4.0] - 2026-10-10
 
 ### Added & Changed

@@ -558,27 +558,28 @@ function displayStatus(
   const msg = lines.join("\n");
   if (ctx.hasUI) ctx.ui.notify(msg, "info");
   pi.sendMessage({
+    customType: "caveman-status",
     content: msg,
-    attribution: "user",
+    display: false,
   }, { triggerTurn: false });
 }
 
 // ── Extension factory ───────────────────────────────────────────────────────
 
+function isContinuationReason(reason: string | undefined): boolean {
+  return reason === "resume" || reason === "reload" || reason === "fork";
+}
+
 export default function cavemanExtension(pi: ExtensionAPI) {
   let lastInjectedMode: Mode | null = null;
 
-  // ── session_start: auto-activate ──────────────────────────────────────
-  pi.on("session_start", async (event, ctx) => {
-    const e = event as Record<string, unknown> | undefined;
-    const reason = e?.reason as string | undefined;
-    const isContinuation = reason === "resume" || reason === "reload" || reason === "fork";
-    if (!isContinuation) {
-      sessionStats = { turns: 0, outputTokens: 0, cacheReadTokens: 0, inputTokens: 0 };
-      sessionExplicitOff = false;
-      lastInjectedMode = null;
-    }
+  const resetSessionState = (): void => {
+    sessionStats = { turns: 0, outputTokens: 0, cacheReadTokens: 0, inputTokens: 0 };
+    sessionExplicitOff = false;
+    lastInjectedMode = null;
+  };
 
+  const activateSession = (ctx: UI): void => {
     let mode = readFlag();
     if (!mode && !sessionExplicitOff) {
       const def = resolveDefault();
@@ -591,7 +592,27 @@ export default function cavemanExtension(pi: ExtensionAPI) {
     }
     applyMode(mode);
     notifyMode(ctx, mode);
-  });
+  };
+
+  // ── session boundaries: auto-activate ──────────────────────────────────
+  // pi reports lifecycle through session_start with a reason (startup|new|
+  // reload|resume|fork). oh-my-pi fires session_start only on initial load
+  // and reports mid-process switches as a separate session_switch event with
+  // a reason (new|resume|fork); pi never dispatches that event, so the extra
+  // registration is a no-op there. Its name is absent from ExtensionAPI's
+  // strict on() overloads, hence the loose typing.
+  const onSessionEvent = (pi as unknown as {
+    on: (event: string, handler: (event: unknown, ctx: UI) => Promise<void>) => unknown;
+  }).on;
+
+  const handleSessionBoundary = async (event: unknown, ctx: UI): Promise<void> => {
+    const e = event as Record<string, unknown> | undefined;
+    if (!isContinuationReason(e?.reason as string | undefined)) resetSessionState();
+    activateSession(ctx);
+  };
+
+  onSessionEvent("session_start", handleSessionBoundary);
+  onSessionEvent("session_switch", handleSessionBoundary);
 
   // ── turn_end: accumulate token stats ─────────────────────────────────
   pi.on("turn_end", (event) => {

@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import cavemanExtension, {
   VALID_MODES,
   canonicalMode,
   resolveModeArg,
@@ -157,3 +160,127 @@ test("estimateSavings computes savings for modes and aliases", () => {
   const fullSavings = estimateSavings(1000, "full");
   assert.equal(fullSavings.pct, 65);
 });
+
+// ── Extension runtime against a mock ExtensionAPI ──────────────────────────
+
+function makeMockPi() {
+  const handlers = new Map();
+  const commands = new Map();
+  const sentMessages = [];
+  return {
+    commands,
+    sentMessages,
+    on(event, handler) {
+      const list = handlers.get(event) ?? [];
+      list.push(handler);
+      handlers.set(event, list);
+    },
+    registerCommand(name, options) {
+      commands.set(name, options);
+    },
+    sendMessage(message, options) {
+      sentMessages.push({ message, options });
+    },
+    async emit(event, ctx) {
+      for (const handler of handlers.get(event.type) ?? []) {
+        await handler(event, ctx);
+      }
+    },
+  };
+}
+
+const silentCtx = () => ({
+  hasUI: true,
+  ui: { notify() {}, setStatus() {} },
+});
+
+// Redirects flag/config paths into a temp dir and pins the default mode, so
+// the runtime tests never touch ~/.pi, ~/.omp, or the machine caveman config.
+function withSandbox(fn) {
+  return async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "pi-caveman-test-"));
+    const savedXdg = process.env.XDG_CONFIG_HOME;
+    const savedMode = process.env.CAVEMAN_DEFAULT_MODE;
+    process.env.XDG_CONFIG_HOME = tmp;
+    process.env.CAVEMAN_DEFAULT_MODE = "off";
+    try {
+      await fn();
+    } finally {
+      if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = savedXdg;
+      if (savedMode === undefined) delete process.env.CAVEMAN_DEFAULT_MODE;
+      else process.env.CAVEMAN_DEFAULT_MODE = savedMode;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  };
+}
+
+test(
+  "status command sends a spec-compliant custom message",
+  withSandbox(async () => {
+    const pi = makeMockPi();
+    cavemanExtension(pi);
+    const ctx = silentCtx();
+
+    await pi.emit({ type: "session_start", reason: "startup" }, ctx);
+    await pi.commands.get("caveman").handler("ultracave", ctx);
+    await pi.emit(
+      { type: "turn_end", message: { usage: { input: 10, output: 40, cacheRead: 5 } } },
+      ctx,
+    );
+    await pi.commands.get("caveman").handler("status", ctx);
+
+    assert.equal(pi.sentMessages.length, 1);
+    const { message, options } = pi.sentMessages[0];
+    assert.equal(message.customType, "caveman-status");
+    assert.equal(message.display, false);
+    assert.ok(message.content.includes("ultracave"));
+    assert.ok(message.content.includes("1 turns"));
+    assert.equal(options.triggerTurn, false);
+    assert.ok(!("attribution" in message), "attribution is not part of either host's sendMessage payload");
+  }),
+);
+
+test(
+  "session stats survive continuation starts and reset on fresh starts",
+  withSandbox(async () => {
+    const pi = makeMockPi();
+    cavemanExtension(pi);
+    const ctx = silentCtx();
+
+    const addTurn = () =>
+      pi.emit(
+        { type: "turn_end", message: { usage: { input: 10, output: 40, cacheRead: 5 } } },
+        ctx,
+      );
+    const turnsShown = async () => {
+      pi.sentMessages.length = 0;
+      await pi.commands.get("caveman").handler("status", ctx);
+      const match = / (\d+) turns/.exec(pi.sentMessages[0].message.content);
+      return Number(match[1]);
+    };
+
+    await pi.emit({ type: "session_start", reason: "startup" }, ctx);
+    await addTurn();
+    assert.equal(await turnsShown(), 1);
+
+    // pi continuation reasons keep the session state
+    await pi.emit({ type: "session_start", reason: "reload" }, ctx);
+    assert.equal(await turnsShown(), 1);
+    await pi.emit({ type: "session_start", reason: "fork" }, ctx);
+    assert.equal(await turnsShown(), 1);
+    await pi.emit({ type: "session_start", reason: "resume" }, ctx);
+    assert.equal(await turnsShown(), 1);
+
+    // oh-my-pi reports mid-process switches as session_switch
+    await pi.emit({ type: "session_switch", reason: "resume" }, ctx);
+    assert.equal(await turnsShown(), 1);
+
+    // fresh sessions reset
+    await pi.emit({ type: "session_start", reason: "startup" }, ctx);
+    assert.equal(await turnsShown(), 0);
+    await addTurn();
+    await pi.emit({ type: "session_switch", reason: "new" }, ctx);
+    assert.equal(await turnsShown(), 0);
+  }),
+);
