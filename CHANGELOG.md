@@ -2,6 +2,15 @@
 
 All notable changes to `@izhimu/pi-caveman` will be documented in this file.
 
+## [0.6.0] - 2026-11-17
+
+### Added & Changed
+- **Upstream hook sync (`v3.2.0..9b243662`)**: `defaultMode` now accepts UTF-8 BOM, UTF-16LE BOM, comments, and trailing commas. Mode writes preserve other JSONC settings. Repo config files without a recognized `defaultMode` no longer hide a sibling or parent config. Windows reads `%APPDATA%\caveman\config.json`, then `~/.config/caveman/config.json`. Missing skill files now fall back to the complete core ruleset instead of a one-line reminder.
+- **Configurable reinforcement**: `CAVEMAN_REINFORCE` and the `reinforce` config field can disable repeated per-turn reminders. Activation and mode changes still inject the full skill ruleset. Resolution order is environment, nearest repo config naming the setting, user config, then enabled.
+
+### Testing
+- Added sandboxed regressions for hand-edited config parsing, config precedence, Windows fallback, and reinforcement behavior. Verified all host API calls against current pi and oh-my-pi source; no host adaptation was needed.
+
 ## [0.5.0] - 2026-10-24
 
 ### Removed

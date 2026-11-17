@@ -85,16 +85,19 @@ Switch and persist directly with `/caveman <mode>` (e.g. `/caveman ultra`).
 Default mode resolution order:
 
 1. `CAVEMAN_DEFAULT_MODE` environment variable
-2. Repo-local: `.caveman/config.json` or `.caveman.json` (walks up to root)
-3. User config: `~/.config/caveman/config.json` (or `%APPDATA%\caveman\config.json` on Windows)
+2. Repo-local: nearest `.caveman/config.json` or `.caveman.json` naming `defaultMode` (walks up to root)
+3. User config: `~/.config/caveman/config.json` (or `%APPDATA%\caveman\config.json`, then `~/.config/caveman/config.json`, on Windows)
 4. `caveman` (fallback default)
 
 Manual config file format:
 ```json
 {
-  "defaultMode": "ultracave"
+  "defaultMode": "ultracave",
+  "reinforce": true
 }
 ```
+
+Config files accept UTF-8 BOM, UTF-16LE BOM, comments, and trailing commas. Set `reinforce` to `false` or `CAVEMAN_REINFORCE=0` to disable repeated per-turn reminders; activation and mode changes still inject the full skill ruleset. The switch resolves through `CAVEMAN_REINFORCE`, repo config, then user config.
 
 ## How It Works
 

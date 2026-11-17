@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import cavemanExtension, {
@@ -10,8 +10,12 @@ import cavemanExtension, {
   parseModeChange,
   loadSkillContent,
   getThesisLine,
+  fallbackRuleset,
   reinforcementLine,
   estimateSavings,
+  resolveDefault,
+  getReinforce,
+  saveUserConfigMode,
 } from "../extensions/caveman.ts";
 
 test("all three skills can be loaded directly without filtering", () => {
@@ -145,6 +149,20 @@ test("thesis and reinforcement line match upstream specification", () => {
   }
 });
 
+test("fallback rulesets retain all core rules and mode-specific language guidance", () => {
+  for (const mode of VALID_MODES) {
+    const ruleset = fallbackRuleset(mode);
+    assert.ok(ruleset.includes("1. Answer first."));
+    assert.ok(ruleset.includes("9. Never perform caveman."));
+    if (mode === "megacave") {
+      assert.ok(ruleset.includes("8. Prose in 文言."));
+      assert.ok(ruleset.endsWith("以文言答。技術之實皆存，唯贅言去之。"));
+    } else {
+      assert.ok(ruleset.includes("8. User's language."));
+    }
+  }
+});
+
 test("estimateSavings computes savings for modes and aliases", () => {
   const cavemanSavings = estimateSavings(1000, "caveman");
   assert.equal(cavemanSavings.pct, 65);
@@ -161,6 +179,133 @@ test("estimateSavings computes savings for modes and aliases", () => {
   const fullSavings = estimateSavings(1000, "full");
   assert.equal(fullSavings.pct, 65);
 });
+
+function withConfigSandbox(fn) {
+  return () => {
+    const tmp = mkdtempSync(join(tmpdir(), "pi-caveman-config-test-"));
+    const cwd = process.cwd();
+    const savedXdg = process.env.XDG_CONFIG_HOME;
+    const savedMode = process.env.CAVEMAN_DEFAULT_MODE;
+    const savedReinforce = process.env.CAVEMAN_REINFORCE;
+    process.env.XDG_CONFIG_HOME = join(tmp, "xdg");
+    delete process.env.CAVEMAN_DEFAULT_MODE;
+    delete process.env.CAVEMAN_REINFORCE;
+    process.chdir(tmp);
+    try {
+      fn(tmp);
+    } finally {
+      process.chdir(cwd);
+      if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = savedXdg;
+      if (savedMode === undefined) delete process.env.CAVEMAN_DEFAULT_MODE;
+      else process.env.CAVEMAN_DEFAULT_MODE = savedMode;
+      if (savedReinforce === undefined) delete process.env.CAVEMAN_REINFORCE;
+      else process.env.CAVEMAN_REINFORCE = savedReinforce;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  };
+}
+
+test(
+  "defaultMode accepts BOM, UTF-16LE, comments, and trailing commas",
+  withConfigSandbox(() => {
+    const configDir = join(process.env.XDG_CONFIG_HOME, "caveman");
+    const configPath = join(configDir, "config.json");
+    mkdirSync(configDir, { recursive: true });
+    const json = '{"defaultMode":"off"}';
+    const variants = {
+      "UTF-8 BOM": Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(json)]),
+      "UTF-16LE BOM": Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(json, "utf16le")]),
+      "line comment": '// mine\n{"defaultMode":"off"} // trailing',
+      "block comment": '/* mine */ {"defaultMode": /* why */ "off"}',
+      "trailing comma": '{"defaultMode":"off",}',
+      "comment-like string": '{"note":"http://x // y,}","defaultMode":"off",}',
+    };
+    for (const [name, content] of Object.entries(variants)) {
+      writeFileSync(configPath, content);
+      assert.equal(resolveDefault(), "off", name);
+    }
+  }),
+);
+
+test(
+  "mode writes preserve other JSONC config settings",
+  withConfigSandbox(() => {
+    const configDir = join(process.env.XDG_CONFIG_HOME, "caveman");
+    const configPath = join(configDir, "config.json");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(configPath, '{\n  // keep these settings\n  "reinforce": false,\n  "note": "http://x // y,}",\n}');
+    saveUserConfigMode("ultracave");
+    const saved = JSON.parse(readFileSync(configPath, "utf8"));
+    assert.equal(saved.defaultMode, "ultracave");
+    assert.equal(saved.reinforce, false);
+    assert.equal(saved.note, "http://x // y,}");
+  }),
+);
+
+test(
+  "repo config without defaultMode does not hide sibling or parent config",
+  withConfigSandbox((tmp) => {
+    mkdirSync(join(tmp, ".caveman"));
+    writeFileSync(join(tmp, ".caveman", "config.json"), '{"execute":{"mcp":false}}');
+    writeFileSync(join(tmp, ".caveman.json"), '{"defaultMode":"off"}');
+    const nested = join(tmp, "sub");
+    mkdirSync(join(nested, ".caveman"), { recursive: true });
+    writeFileSync(join(nested, ".caveman", "config.json"), "{}");
+    process.chdir(nested);
+    assert.equal(resolveDefault(), "off");
+  }),
+);
+
+test(
+  "reinforce resolves through env, repo, and user config",
+  withConfigSandbox((tmp) => {
+    assert.equal(getReinforce(), true);
+    const configDir = join(process.env.XDG_CONFIG_HOME, "caveman");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(join(configDir, "config.json"), '{"reinforce":false}');
+    assert.equal(getReinforce(), false);
+    writeFileSync(join(tmp, ".caveman.json"), '{"defaultMode":"ultracave"}');
+    assert.equal(getReinforce(), false, "defaultMode-only repo config must not hide user reinforce");
+    writeFileSync(join(tmp, ".caveman.json"), '{"reinforce":true}');
+    assert.equal(getReinforce(), true);
+    process.env.CAVEMAN_REINFORCE = "0";
+    assert.equal(getReinforce(), false);
+    process.env.CAVEMAN_REINFORCE = "1";
+    assert.equal(getReinforce(), true);
+    process.env.CAVEMAN_REINFORCE = "maybe";
+    assert.equal(getReinforce(), true, "invalid env falls through to repo config");
+  }),
+);
+
+test(
+  "Windows user config falls back from APPDATA to ~/.config",
+  withConfigSandbox((tmp) => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform");
+    const savedHome = process.env.HOME;
+    const savedAppdata = process.env.APPDATA;
+    delete process.env.XDG_CONFIG_HOME;
+    process.env.HOME = join(tmp, "home");
+    process.env.APPDATA = join(tmp, "appdata");
+    Object.defineProperty(process, "platform", { value: "win32" });
+    try {
+      const homeConfig = join(tmp, "home", ".config", "caveman");
+      mkdirSync(homeConfig, { recursive: true });
+      writeFileSync(join(homeConfig, "config.json"), '{"defaultMode":"off"}');
+      assert.equal(resolveDefault(), "off");
+      const appdataConfig = join(tmp, "appdata", "caveman");
+      mkdirSync(appdataConfig, { recursive: true });
+      writeFileSync(join(appdataConfig, "config.json"), '{"defaultMode":"ultra"}');
+      assert.equal(resolveDefault(), "ultracave");
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+      if (savedAppdata === undefined) delete process.env.APPDATA;
+      else process.env.APPDATA = savedAppdata;
+    }
+  }),
+);
 
 // ── Extension runtime against a mock ExtensionAPI ──────────────────────────
 
@@ -183,9 +328,11 @@ function makeMockPi() {
       sentMessages.push({ message, options });
     },
     async emit(event, ctx) {
+      const results = [];
       for (const handler of handlers.get(event.type) ?? []) {
-        await handler(event, ctx);
+        results.push(await handler(event, ctx));
       }
+      return results;
     },
   };
 }
@@ -202,8 +349,10 @@ function withSandbox(fn) {
     const tmp = mkdtempSync(join(tmpdir(), "pi-caveman-test-"));
     const savedXdg = process.env.XDG_CONFIG_HOME;
     const savedMode = process.env.CAVEMAN_DEFAULT_MODE;
+    const savedReinforce = process.env.CAVEMAN_REINFORCE;
     process.env.XDG_CONFIG_HOME = tmp;
     process.env.CAVEMAN_DEFAULT_MODE = "off";
+    delete process.env.CAVEMAN_REINFORCE;
     try {
       await fn();
     } finally {
@@ -211,6 +360,8 @@ function withSandbox(fn) {
       else process.env.XDG_CONFIG_HOME = savedXdg;
       if (savedMode === undefined) delete process.env.CAVEMAN_DEFAULT_MODE;
       else process.env.CAVEMAN_DEFAULT_MODE = savedMode;
+      if (savedReinforce === undefined) delete process.env.CAVEMAN_REINFORCE;
+      else process.env.CAVEMAN_REINFORCE = savedReinforce;
       rmSync(tmp, { recursive: true, force: true });
     }
   };
@@ -239,6 +390,28 @@ test(
     assert.ok(message.content.includes("1 turns"));
     assert.equal(options.triggerTurn, false);
     assert.ok(!("attribution" in message), "attribution is not part of either host's sendMessage payload");
+  }),
+);
+
+test(
+  "reinforce off suppresses reminders but preserves activation and switch rulesets",
+  withSandbox(async () => {
+    const pi = makeMockPi();
+    cavemanExtension(pi);
+    const ctx = silentCtx();
+    process.env.CAVEMAN_REINFORCE = "0";
+
+    await pi.emit({ type: "session_start", reason: "startup" }, ctx);
+    await pi.commands.get("caveman").handler("ultracave", ctx);
+    const activation = await pi.emit({ type: "before_agent_start" }, ctx);
+    assert.ok(activation[0].message.content.includes("CAVEMAN MODE ACTIVE — mode: ultracave"));
+
+    const reminder = await pi.emit({ type: "before_agent_start" }, ctx);
+    assert.equal(reminder[0], null);
+
+    await pi.commands.get("caveman").handler("megacave", ctx);
+    const switched = await pi.emit({ type: "before_agent_start" }, ctx);
+    assert.ok(switched[0].message.content.includes("CAVEMAN MODE ACTIVE — mode: megacave"));
   }),
 );
 

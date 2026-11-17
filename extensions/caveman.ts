@@ -139,13 +139,13 @@ export function cavemanConfigDir(): string {
   return join(homedir(), ".config", "caveman");
 }
 
-export function findRepoConfig(start: string): string | null {
+export function findRepoConfig(start: string, accept?: (path: string) => boolean): string | null {
   let dir = start;
   for (let i = 0; i < 64; i++) {
     const a = join(dir, ".caveman", "config.json");
-    if (existsSync(a)) return a;
+    if (existsSync(a) && (!accept || accept(a))) return a;
     const b = join(dir, ".caveman.json");
-    if (existsSync(b)) return b;
+    if (existsSync(b) && (!accept || accept(b))) return b;
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
@@ -153,49 +153,75 @@ export function findRepoConfig(start: string): string | null {
   return null;
 }
 
-export function readConfigMode(configPath: string): string | null {
+// Hand-edited config may have a BOM, UTF-16LE encoding, comments, or trailing commas.
+function parseConfigFile(configPath: string): unknown {
+  const buf = readFileSync(configPath);
+  const text = (buf[0] === 0xff && buf[1] === 0xfe ? buf.toString("utf16le", 2) : buf.toString("utf8"))
+    .replace(/^\uFEFF/, "");
   try {
-    const parsed = JSON.parse(readFileSync(configPath, "utf-8"));
-    const m = parsed?.defaultMode;
-    return typeof m === "string" ? m : null;
+    return JSON.parse(text);
+  } catch {
+    return JSON.parse(text
+      .replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (m, s) => s || "")
+      .replace(/("(?:[^"\\]|\\.)*")|,(\s*[}\]])/g, (m, s, close) => s || close));
+  }
+}
+
+function canonicalDefaultMode(raw: unknown): Mode | "off" | null {
+  if (typeof raw !== "string") return null;
+  const lower = raw.trim().toLowerCase();
+  return lower === "off" ? "off" : canonicalMode(lower);
+}
+
+export function readConfigMode(configPath: string): Mode | "off" | null {
+  try {
+    const parsed = parseConfigFile(configPath) as { defaultMode?: unknown } | null;
+    return canonicalDefaultMode(parsed?.defaultMode);
   } catch {
     return null;
   }
 }
 
+function resolveSetting<T>(
+  envValue: T | null,
+  readFile: (path: string) => T | null,
+  startDir = process.cwd(),
+): T | null {
+  if (envValue !== null) return envValue;
+  const repo = findRepoConfig(startDir, (path) => readFile(path) !== null);
+  if (repo) return readFile(repo);
+  const user = readFile(join(cavemanConfigDir(), "config.json"));
+  if (user !== null) return user;
+  if (process.platform === "win32" && !process.env.XDG_CONFIG_HOME) {
+    return readFile(join(homedir(), ".config", "caveman", "config.json"));
+  }
+  return null;
+}
+
 export function resolveDefault(): Mode | "off" {
-  // 1. Env var (short-circuits)
-  const env = process.env.CAVEMAN_DEFAULT_MODE;
-  if (env) {
-    const lower = env.toLowerCase();
-    if (lower === "off") return "off";
-    const canon = canonicalMode(lower);
-    if (canon) return canon;
+  return resolveSetting(canonicalDefaultMode(process.env.CAVEMAN_DEFAULT_MODE), readConfigMode) ?? "caveman";
+}
+
+function parseSwitch(raw: unknown): boolean | null {
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw !== "string") return null;
+  const value = raw.trim().toLowerCase();
+  if (["1", "true", "on", "yes"].includes(value)) return true;
+  if (["0", "false", "off", "no"].includes(value)) return false;
+  return null;
+}
+
+function readReinforce(configPath: string): boolean | null {
+  try {
+    const parsed = parseConfigFile(configPath) as { reinforce?: unknown } | null;
+    return parsed && typeof parsed === "object" ? parseSwitch(parsed.reinforce) : null;
+  } catch {
+    return null;
   }
-  // 2. Repo-local config
-  const repo = findRepoConfig(process.cwd());
-  if (repo) {
-    const m = readConfigMode(repo);
-    if (m) {
-      const lower = m.toLowerCase();
-      if (lower === "off") return "off";
-      const canon = canonicalMode(lower);
-      if (canon) return canon;
-    }
-  }
-  // 3. User config
-  const user = join(cavemanConfigDir(), "config.json");
-  if (existsSync(user)) {
-    const m = readConfigMode(user);
-    if (m) {
-      const lower = m.toLowerCase();
-      if (lower === "off") return "off";
-      const canon = canonicalMode(lower);
-      if (canon) return canon;
-    }
-  }
-  // 4. Default
-  return "caveman";
+}
+
+export function getReinforce(startDir = process.cwd()): boolean {
+  return resolveSetting(parseSwitch(process.env.CAVEMAN_REINFORCE), readReinforce, startDir) !== false;
 }
 
 // ── Flag I/O ────────────────────────────────────────────────────────────────
@@ -271,7 +297,7 @@ export function saveUserConfigMode(mode: string): void {
     if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
     let existing: Record<string, unknown> = {};
     if (existsSync(cfgPath)) {
-      try { existing = JSON.parse(readFileSync(cfgPath, "utf-8")); } catch {}
+      try { existing = parseConfigFile(cfgPath) as Record<string, unknown>; } catch {}
     }
     existing.defaultMode = mode;
     writeFileSync(cfgPath, JSON.stringify(existing, null, 2) + "\n", { mode: 0o600 });
@@ -350,6 +376,24 @@ export function getThesisLine(mode: Mode): string {
     } catch {}
   }
   return FALLBACK_THESIS[mode] ?? FALLBACK_THESIS.caveman;
+}
+
+export function fallbackRuleset(mode: Mode): string {
+  const modeThesis = mode !== "caveman" ? getThesisLine(mode) : null;
+  return FALLBACK_THESIS.caveman + "\n\n" +
+    "1. Answer first.\n" +
+    "2. Kill ceremony.\n" +
+    "3. Short word.\n" +
+    "4. Articles optional, meaning never.\n" +
+    "5. One idea per sentence.\n" +
+    "6. Payload verbatim.\n" +
+    "7. Tool runs: bounded status.\n" +
+    (mode === "megacave"
+      ? "8. Prose in 文言. Code, commands, paths, errors in their original script.\n"
+      : "8. User's language. Compress the style, not the language. Never switch because of quoted text.\n") +
+    "9. Never perform caveman.\n\n" +
+    "Plain prose for security warnings, irreversible actions, and anything persisted outside chat (code, commits, PRs, docs)." +
+    (modeThesis ? "\n\n" + modeThesis : "");
 }
 
 export function reinforcementLine(mode: Mode): string {
@@ -706,8 +750,9 @@ export default function cavemanExtension(pi: ExtensionAPI) {
       const header = `CAVEMAN MODE ACTIVE — mode: ${active}\n\n`;
       content = skillContent
         ? header + skillContent
-        : reinforcementLine(active);
+        : header + fallbackRuleset(active);
     } else {
+      if (!getReinforce()) return null;
       content = reinforcementLine(active);
     }
 
