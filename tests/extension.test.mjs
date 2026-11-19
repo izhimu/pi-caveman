@@ -402,12 +402,15 @@ test(
     process.env.CAVEMAN_REINFORCE = "0";
 
     await pi.emit({ type: "session_start", reason: "startup" }, ctx);
+    const inactive = await pi.emit({ type: "before_agent_start" }, ctx);
+    assert.equal(inactive[0], undefined);
+
     await pi.commands.get("caveman").handler("ultracave", ctx);
     const activation = await pi.emit({ type: "before_agent_start" }, ctx);
     assert.ok(activation[0].message.content.includes("CAVEMAN MODE ACTIVE — mode: ultracave"));
 
     const reminder = await pi.emit({ type: "before_agent_start" }, ctx);
-    assert.equal(reminder[0], null);
+    assert.equal(reminder[0], undefined);
 
     await pi.commands.get("caveman").handler("megacave", ctx);
     const switched = await pi.emit({ type: "before_agent_start" }, ctx);

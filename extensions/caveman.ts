@@ -738,7 +738,7 @@ export default function cavemanExtension(pi: ExtensionAPI) {
     }
     if (!active || (active as string) === "off") {
       lastInjectedMode = null;
-      return null;
+      return;
     }
 
     const modeChanged = active !== lastInjectedMode;
@@ -752,7 +752,7 @@ export default function cavemanExtension(pi: ExtensionAPI) {
         ? header + skillContent
         : header + fallbackRuleset(active);
     } else {
-      if (!getReinforce()) return null;
+      if (!getReinforce()) return;
       content = reinforcementLine(active);
     }
 

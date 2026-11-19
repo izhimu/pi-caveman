@@ -2,6 +2,14 @@
 
 All notable changes to `@izhimu/pi-caveman` will be documented in this file.
 
+## [0.6.1] - 2026-11-19
+
+### Fixed
+- **Pi `before_agent_start` contract**: inactive sessions and disabled reinforcement now return `undefined` instead of `null`, matching the current `ExtensionHandler` result type. oh-my-pi behavior is unchanged.
+
+### Testing
+- Updated the sandboxed mock-host regression to require `undefined`; all 22 tests pass.
+
 ## [0.6.0] - 2026-11-17
 
 ### Added & Changed
